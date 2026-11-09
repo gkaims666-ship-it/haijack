@@ -1,13 +1,13 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Четыре полосы эстафеты — четыре агента -->
+<!-- Знак приложения: четыре полосы эстафеты — четыре агента — на тёмном поле -->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
     android:width="48dp"
     android:height="48dp"
     android:viewportWidth="48"
     android:viewportHeight="48">
-    <path android:fillColor="#18212B" android:pathData="M10,2h28a8,8 0,0 1,8 8v28a8,8 0,0 1,-8 8h-28a8,8 0,0 1,-8 -8v-28a8,8 0,0 1,8 -8z" />
-    <path android:fillColor="#B39DFA" android:pathData="M10,13h28v4h-28z" />
-    <path android:fillColor="#4FD1BD" android:pathData="M10,19.5h21v4h-21z" />
-    <path android:fillColor="#F5B14C" android:pathData="M10,26h25v4h-25z" />
-    <path android:fillColor="#7CB0FF" android:pathData="M10,32.5h15v4h-15z" />
+    <path android:fillColor="#0B0F14" android:pathData="M11,2h26a9,9 0,0 1,9 9v26a9,9 0,0 1,-9 9h-26a9,9 0,0 1,-9 -9v-26a9,9 0,0 1,9 -9z" />
+    <path android:fillColor="#A78BFA" android:pathData="M12,13h24a2,2 0,0 1,0 4h-24a2,2 0,0 1,0 -4z" />
+    <path android:fillColor="#34D3B6" android:pathData="M12,19.5h17a2,2 0,0 1,0 4h-17a2,2 0,0 1,0 -4z" />
+    <path android:fillColor="#F2B45A" android:pathData="M12,26h21a2,2 0,0 1,0 4h-21a2,2 0,0 1,0 -4z" />
+    <path android:fillColor="#6AA8FF" android:pathData="M12,32.5h12a2,2 0,0 1,0 4h-12a2,2 0,0 1,0 -4z" />
 </vector>

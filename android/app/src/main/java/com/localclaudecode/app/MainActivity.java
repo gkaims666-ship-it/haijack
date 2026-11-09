@@ -81,7 +81,8 @@ public class MainActivity extends Activity {
             @Override
             public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest request) {
                 Uri uri = request.getUrl();
-                if ("127.0.0.1".equals(uri.getHost())) return false;
+                // Свой сервер и сессия на компьютере в локальной сети открываются внутри приложения
+                if (isLocalNetworkHost(uri.getHost()) && "http".equals(uri.getScheme())) return false;
                 // Внешние ссылки открываются в браузере, а не внутри приложения
                 try {
                     startActivity(new Intent(Intent.ACTION_VIEW, uri));
@@ -270,6 +271,23 @@ public class MainActivity extends Activity {
         }, "wait-server").start();
     }
 
+    /** Адрес этого устройства или частной сети (10.x, 172.16–31.x, 192.168.x) */
+    static boolean isLocalNetworkHost(String host) {
+        if (host == null) return false;
+        if (host.equals("127.0.0.1") || host.equals("localhost")) return true;
+        String[] p = host.split("\\.");
+        if (p.length != 4) return false;
+        try {
+            int a = Integer.parseInt(p[0]);
+            int b = Integer.parseInt(p[1]);
+            Integer.parseInt(p[2]);
+            Integer.parseInt(p[3]);
+            return a == 10 || (a == 172 && b >= 16 && b <= 31) || (a == 192 && b == 168);
+        } catch (NumberFormatException e) {
+            return false;
+        }
+    }
+
     private static int freePort() throws IOException {
         try (ServerSocket socket = new ServerSocket(0, 1, java.net.InetAddress.getByName("127.0.0.1"))) {
             return socket.getLocalPort();
@@ -302,7 +320,14 @@ public class MainActivity extends Activity {
 
     @Override
     public void onBackPressed() {
-        // «Назад» сворачивает приложение: работа агентов при этом продолжается
+        // Из сессии компьютера «Назад» возвращает к программе на этом устройстве
+        String url = webView.getUrl();
+        String host = url == null ? null : Uri.parse(url).getHost();
+        if (port > 0 && host != null && !"127.0.0.1".equals(host)) {
+            webView.loadUrl("http://127.0.0.1:" + port + "/?t=" + token);
+            return;
+        }
+        // Иначе «Назад» сворачивает приложение: работа агентов при этом продолжается
         moveTaskToBack(true);
     }
 }

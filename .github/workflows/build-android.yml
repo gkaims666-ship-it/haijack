@@ -49,7 +49,8 @@ jobs:
           unzip -l local-claude-code.apk > listing.txt
           for f in lib/arm64-v8a/libnode.so lib/arm64-v8a/libnative-lib.so lib/arm64-v8a/libc++_shared.so \
                    lib/armeabi-v7a/libnode.so lib/x86_64/libnode.so \
-                   assets/lcc/bin/lcc.js assets/lcc/src/index.js assets/lcc/src/web/page.js assets/lcc/package.json; do
+                   assets/lcc/bin/lcc.js assets/lcc/src/index.js assets/lcc/src/web/page.js assets/lcc/src/self/check-worker.js \
+                   assets/lcc/test/run.mjs assets/lcc/LCC.md assets/lcc/package.json; do
             grep -q " $f\$" listing.txt || { echo "В APK нет $f"; grep -E "lib/|assets/" listing.txt | head -50; exit 1; }
           done
           "$ANDROID_HOME"/build-tools/$(ls "$ANDROID_HOME"/build-tools | sort -V | tail -n 1)/apksigner verify --print-certs local-claude-code.apk | head -3

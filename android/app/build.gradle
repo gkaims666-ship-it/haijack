@@ -83,7 +83,8 @@ android {
 
 def copyLccSources = tasks.register('copyLccSources', Copy) {
     from(new File(rootDir, '..')) {
-        include 'bin/**', 'src/**', 'package.json'
+        // test и LCC.md нужны для самоулучшения: агенты читают правила проекта и обновляют тесты
+        include 'bin/**', 'src/**', 'test/**', 'package.json', 'LCC.md'
     }
     into layout.buildDirectory.dir('generated/lcc-assets/lcc')
 }
