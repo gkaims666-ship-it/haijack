@@ -15,7 +15,8 @@ import { EventHub, WebRenderer } from './hub.js';
 import { Session, MODES, TARGETS } from '../session.js';
 import { hasCredentials, saveSettings, refreshConfig, CONFIG_DIR } from '../config.js';
 import { ModelClient, OpenAIClient } from '../api/index.js';
-import { checkLocalServer } from '../api/openai.js';
+import { checkLocalServer, pullModel, MODEL_NAME } from '../api/openai.js';
+import { searchModels, modelVariants } from '../api/huggingface.js';
 import { Orchestrator } from '../agents/orchestrator.js';
 import { Memory, formatJournal } from '../memory.js';
 import { Usage } from '../usage.js';
@@ -87,9 +88,40 @@ export async function startWeb({ cfg, mode, port = 0, host = '127.0.0.1', token,
   let running = false; // идёт обработка ввода (шире, чем session.busy: включает команды)
   const snapshot = () => ({
     t: 'state', ...session.state(), busy: running, needsSetup: !hasCredentials(cfg),
-    tokens: usage.totals(), bootId,
+    tokens: usage.totals(), bootId, pull: pullView(),
   });
   const pushState = () => hub.emit(snapshot(), { volatile: true });
+
+  // ---------- скачивание модели ----------
+  // Одна загрузка за раз. Идёт независимо от задач: модель можно скачать ещё на экране входа.
+  let pull = null;
+  const pullView = () => (pull ? { model: pull.model, status: pull.status, percent: pull.percent, done: pull.done, error: pull.error } : null);
+  const pullEvent = () => hub.emit({ t: 'pull', ...pullView() }, { volatile: true });
+  const STATUS = [
+    [/^pulling manifest/, 'Получаю описание модели'], [/^pulling/, 'Скачиваю'], [/^verifying/, 'Проверяю целостность'],
+    [/^writing/, 'Сохраняю'], [/^removing/, 'Убираю лишнее'], [/^success/, 'Готово'],
+  ];
+  function startPull(model, baseUrl) {
+    const job = { model, status: 'Подключаюсь к серверу моделей', percent: null, done: false, error: '', controller: new AbortController() };
+    pull = job;
+    pullEvent();
+    const local = { baseUrl: baseUrl || cfg.local.baseUrl, apiKey: cfg.local.apiKey };
+    pullModel(local, model, {
+      signal: job.controller.signal,
+      onProgress: (p) => {
+        job.status = (STATUS.find(([re]) => re.test(p.status)) || [null, p.status])[1];
+        job.percent = p.percent;
+        pullEvent();
+      },
+    }).then(() => {
+      job.status = 'Модель скачана'; job.percent = 100;
+    }, (err) => {
+      job.error = err.name === 'AbortError' ? 'Загрузка остановлена. Скачанная часть сохранена: при повторе загрузка продолжится.' : err.message;
+    }).finally(() => {
+      job.done = true;
+      pullEvent();
+    });
+  }
 
   // ---------- завершение ----------
   let finish;
@@ -99,6 +131,7 @@ export async function startWeb({ cfg, mode, port = 0, host = '127.0.0.1', token,
     if (closing) return;
     closing = true;
     session.abort();
+    pull?.controller.abort();
     hub.cancelAsks('no');
     hub.flush();
     server.closeAllConnections?.();
@@ -264,6 +297,11 @@ export async function startWeb({ cfg, mode, port = 0, host = '127.0.0.1', token,
             const probe = new OpenAIClient({ local: { baseUrl: base, apiKey: url.searchParams.get('key') || cfg.local.apiKey } });
             return send(res, 200, { models: await probe.listModels(AbortSignal.timeout(8000)) });
           }
+          case '/api/hf/search':
+            // Каталог Hugging Face: все общедоступные модели в формате GGUF, по запросу и страницами
+            return send(res, 200, await searchModels(url.searchParams.get('q') || '', { cursor: url.searchParams.get('cursor') || '', signal: AbortSignal.timeout(15000) }));
+          case '/api/hf/files':
+            return send(res, 200, { variants: await modelVariants(url.searchParams.get('repo') || '', { signal: AbortSignal.timeout(15000) }) });
           case '/api/memory':
             return send(res, 200, { memory: memory.read(), journal: formatJournal(memory.recent(20)), enabled: cfg.memory });
           default:
@@ -303,6 +341,18 @@ export async function startWeb({ cfg, mode, port = 0, host = '127.0.0.1', token,
           if (restart) setTimeout(() => shutdown('restart'), 200);
           return undefined;
         }
+        case '/api/pull': {
+          const model = String(body.model ?? '').trim();
+          if (!MODEL_NAME.test(model)) return send(res, 400, { error: 'Укажите имя модели без пробелов, например qwen2.5-coder:14b или hf.co/автор/репозиторий:Q4_K_M' });
+          const base = body.url === undefined ? '' : cleanUrl(body.url);
+          if (base && !isHttpUrl(base)) return send(res, 400, { error: 'Адрес сервера моделей должен начинаться с http:// или https://' });
+          if (pull && !pull.done) return send(res, 409, { error: `Уже идёт загрузка модели ${pull.model}. Дождитесь её окончания или остановите.` });
+          startPull(model, base);
+          return send(res, 202, { ok: true });
+        }
+        case '/api/pull/cancel':
+          if (pull && !pull.done) pull.controller.abort();
+          return send(res, 200, { ok: true });
         case '/api/test': {
           // Пробный запрос к модели с текущими настройками: так экран входа сразу сообщает о неверном ключе или адресе
           if (!hasCredentials(cfg)) return send(res, 400, { error: cfg.provider === 'local' ? 'Выберите модель.' : 'Введите ключ API.' });
