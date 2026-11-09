@@ -4,7 +4,9 @@ import fs from 'node:fs';
 import path from 'node:path';
 import readline from 'node:readline';
 import { loadEnv, buildConfig, hasCredentials, interactiveSetup } from './config.js';
-import { AnthropicClient } from './api/anthropic.js';
+import { ModelClient } from './api/index.js';
+import { Memory } from './memory.js';
+import { checkLocalServer } from './api/openai.js';
 import { Orchestrator } from './agents/orchestrator.js';
 import { Renderer } from './ui/renderer.js';
 import { startRepl } from './ui/repl.js';
@@ -30,6 +32,7 @@ Local Claude Code v${VERSION} — терминальный ИИ-ассистен
       --cwd <папка>            корень проекта
       --web                    веб-интерфейс вместо терминального
       --port <номер>           порт веб-интерфейса (по умолчанию свободный)
+      --self-check             проверить, что код приложения загружается и интерфейс запускается
   -v, --version
   -h, --help
 `;
@@ -51,6 +54,7 @@ export function parseArgs(argv) {
       case '-p': case '--print': o.print = val(); break;
       case '--cwd': o.cwd = val(); break;
       case '--web': o.web = true; break;
+      case '--self-check': o.selfCheck = true; break;
       case '--port': o.port = val(); break;
       default:
         if (a.startsWith('--mode=')) o.mode = a.slice(7);
@@ -71,11 +75,29 @@ export function parseArgs(argv) {
   return o;
 }
 
-export async function main(argv = process.argv.slice(2)) {
+const RESTART = 75; // код для загрузчика: установлена новая версия кода, запустить её в этом же процессе
+
+/**
+ * @param {string[]} argv
+ * @param {{notices?: string[], bootOk?: () => void}} boot  сведения от загрузчика (bin/lcc.js)
+ */
+export async function main(argv = process.argv.slice(2), boot = {}) {
+  const notices = boot.notices ?? [];
+  const bootOk = boot.bootOk ?? (() => {});
   let args;
   try { args = parseArgs(argv); } catch (e) { console.error(e.message); return 2; }
   if (args.help) { console.log(USAGE); return 0; }
   if (args.version) { console.log(VERSION); return 0; }
+  if (args.selfCheck) {
+    // Диагностика: та же самопроверка, что выполняется перед установкой доработанной версии
+    const { prepareStaging } = await import('./self/improve.js');
+    const { selfCheck } = await import('./self/check.js');
+    const dir = prepareStaging();
+    const check = await selfCheck(dir, { runTests: false });
+    fs.rmSync(dir, { recursive: true, force: true });
+    console.log(check.report);
+    return check.ok ? 0 : 1;
+  }
 
   const cwd = path.resolve(args.cwd || process.cwd());
   if (!fs.existsSync(cwd) || !fs.statSync(cwd).isDirectory()) {
@@ -93,37 +115,65 @@ export async function main(argv = process.argv.slice(2)) {
   };
 
   if (args.web) {
-    // Веб-режим сам спросит ключ в браузере, если его нет
+    // Веб-режим сам покажет экран входа в браузере, если доступ к модели не настроен
     applyArgs();
     const { startWeb, logError } = await import('./web/server.js');
-    process.on('uncaughtException', logError);
-    process.on('unhandledRejection', logError);
     const web = await startWeb({
       cfg,
       mode: args.mode,
       port: args.port ?? (Number(process.env.LCC_WEB_PORT) || 0),
       host: process.env.LCC_WEB_HOST || '127.0.0.1',
       token: process.env.LCC_WEB_TOKEN || undefined,
+      notices,
     });
+    bootOk();
     console.log(`Local Claude Code v${VERSION} — веб-интерфейс запущен.`);
-    console.log(`Откройте в браузере: ${web.url}`);
+    for (const url of web.urls) console.log(`  ${url}`);
     console.log('Ссылка содержит ключ доступа — не передавайте её другим. Ctrl+C — остановить.');
-    process.on('SIGINT', () => web.close());
-    process.on('SIGTERM', () => web.close());
-    await web.closed;
+    const stop = () => web.close();
+    process.on('uncaughtException', logError);
+    process.on('unhandledRejection', logError);
+    process.on('SIGINT', stop);
+    process.on('SIGTERM', stop);
+    const outcome = await web.closed;
+    process.off('uncaughtException', logError);
+    process.off('unhandledRejection', logError);
+    process.off('SIGINT', stop);
+    process.off('SIGTERM', stop);
+    if (outcome === 'restart') {
+      // Новая версия должна подняться на том же адресе, чтобы открытая страница переподключилась сама
+      process.env.LCC_WEB_PORT = String(web.port);
+      process.env.LCC_WEB_TOKEN = web.token;
+      return RESTART;
+    }
     return 0;
   }
 
   if (!hasCredentials(cfg)) {
+    if (cfg.provider === 'local') {
+      console.error(c.red(`Не выбрана модель для локального сервера ${cfg.local.baseUrl}. Задайте LCC_MODEL или настройте всё в браузере: lcc --web`));
+      return 1;
+    }
     try { cfg = await interactiveSetup(cfg); } catch (e) { console.error(c.red(e.message)); return 1; }
   }
   applyArgs();
 
+  if (cfg.provider === 'local') {
+    // Проверка до начала работы: иначе о незапущенном сервере пользователь узнал бы из ошибки посреди задачи
+    const health = await checkLocalServer(cfg.local, cfg.model);
+    if (!health.ok) {
+      console.error(c.yellow(health.problem));
+      if (args.print) return 1;
+    }
+  }
+
   const usage = new Usage();
-  const client = new AnthropicClient(cfg);
+  const memory = new Memory();
+  const client = new ModelClient(cfg);
   const renderer = new Renderer({ cfg, question: async () => 'n' });
-  const orchestrator = new Orchestrator({ client, cfg, ui: renderer, usage });
-  const session = new Session({ cfg, orchestrator, usage, ui: renderer, mode: args.mode });
+  const orchestrator = new Orchestrator({ client, cfg, ui: renderer, usage, memory });
+  const session = new Session({ cfg, orchestrator, usage, ui: renderer, mode: args.mode, memory });
+  bootOk();
 
   if (args.print) {
     // Однократный режим: подтверждения через временный readline (если есть TTY)
@@ -133,19 +183,23 @@ export async function main(argv = process.argv.slice(2)) {
         rl.question(q, (a) => { rl.close(); res(a); });
       });
     }
+    for (const n of notices) renderer.warn(n);
     let interrupted = false;
-    process.on('SIGINT', () => {
+    const onSigint = () => {
       if (interrupted) process.exit(130);
       interrupted = true;
       session.abort();
-    });
+    };
+    process.on('SIGINT', onSigint);
     let failed = false;
     const origError = renderer.error.bind(renderer);
     renderer.error = (s) => { failed = true; origError(s); };
     await session.handle(args.print);
+    process.off('SIGINT', onSigint);
+    // Однократный запуск завершается сам: новая версия заработает при следующем запуске
     return failed || interrupted ? 1 : 0;
   }
 
-  await startRepl({ cfg, session, renderer, usage });
-  return 0;
+  const outcome = await startRepl({ cfg, session, renderer, usage, notices });
+  return outcome === 'restart' ? RESTART : 0;
 }

@@ -1,3 +1,4 @@
+import './isolate.js';
 // Веб-режим: доступ по токену, поток событий, полный конвейер с подтверждениями через HTTP, откат.
 
 import { test } from 'node:test';
@@ -7,22 +8,27 @@ import os from 'node:os';
 import path from 'node:path';
 import http from 'node:http';
 
-import { startMock } from './mock-server.js';
+import { startMock, startOpenAIMock } from './mock-server.js';
+import { buildConfig } from '../src/config.js';
+import { TEST_HOME } from './isolate.js';
 import { startWeb } from '../src/web/server.js';
 import { parseSSE } from '../src/api/anthropic.js';
 
 function config(cwd, baseUrl, apiKey = 'test-key') {
   return {
     cwd, apiKey, authToken: '', baseUrl, apiVersion: '2023-06-01', model: 'mock', models: {},
-    maxTokens: 1000, maxTurns: 10, maxFixRounds: 2, commandTimeoutMs: 20000,
+    maxTokens: 1000, maxTurns: 10, maxFixRounds: 2, maxCycles: 2, commandTimeoutMs: 20000, memory: false,
     autoApprove: false, allowOutsideCwd: false, thinking: 'off', effort: '', promptCache: false,
+    provider: 'anthropic', local: { baseUrl: 'http://127.0.0.1:9/v1', apiKey: '', fallbackModel: '', numCtx: 0, timeoutMs: 5000 },
   };
 }
 
 /** Подписка на /events: собирает события и умеет ждать нужное */
 async function listen(web) {
   const ac = new AbortController();
-  const res = await fetch(`http://127.0.0.1:${web.port}/events?t=${web.token}`, { signal: ac.signal });
+  const open = () => fetch(`http://127.0.0.1:${web.port}/events?t=${web.token}`, { signal: ac.signal });
+  // После перезапуска сервера на том же порту fetch может попытаться взять закрытое соединение из пула
+  const res = await open().catch(() => open());
   assert.equal(res.status, 200);
   const events = [];
   const waiters = [];
@@ -53,7 +59,7 @@ const post = (web, route, body, headers = { 'x-lcc': '1' }) =>
 
 test('веб: защита доступа', async () => {
   const cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'lcc-web-'));
-  const web = await startWeb({ cfg: config(cwd, 'http://127.0.0.1:9') });
+  const web = await startWeb({ cfg: config(cwd, 'http://127.0.0.1:9'), persist: false });
   try {
     const base = `http://127.0.0.1:${web.port}`;
     assert.equal((await fetch(`${base}/`)).status, 401);
@@ -80,7 +86,7 @@ test('веб: защита доступа', async () => {
 test('веб: конвейер с подтверждениями, затем откат', async () => {
   const mock = await startMock();
   const cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'lcc-web-'));
-  const web = await startWeb({ cfg: config(cwd, mock.url) });
+  const web = await startWeb({ cfg: config(cwd, mock.url), persist: false });
   const sse = await listen(web);
   try {
     assert.equal((await sse.waitFor((e) => e.t === 'state')).mode, 'auto');
@@ -147,7 +153,7 @@ test('веб: конвейер с подтверждениями, затем о�
 test('веб: отклонение действия и остановка задачи', async () => {
   const mock = await startMock();
   const cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'lcc-web-'));
-  const web = await startWeb({ cfg: config(cwd, mock.url) });
+  const web = await startWeb({ cfg: config(cwd, mock.url), persist: false });
   const sse = await listen(web);
   try {
     await post(web, '/api/input', { text: 'создай hello.js' });
@@ -168,30 +174,131 @@ test('веб: отклонение действия и остановка зад
   }
 });
 
-test('веб: без ключа программа спрашивает его и сохраняет', { skip: !process.env.LCC_HOME }, async () => {
+const get = async (web, route) => (await fetch(`http://127.0.0.1:${web.port}${route}${route.includes('?') ? '&' : '?'}t=${web.token}`, { headers: { 'x-lcc': '1' } })).json();
+
+test('веб: вход — настройки сохраняются, доступ к модели проверяется', async () => {
   const mock = await startMock();
+  const local = await startOpenAIMock();
   const cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'lcc-web-'));
-  const cfg = config(cwd, mock.url, '');
-  const web = await startWeb({ cfg, mode: 'solo' });
+  const cfg = buildConfig(cwd); // настоящая конфигурация: ключа нет
+  cfg.memory = false;
+  const web = await startWeb({ cfg, mode: 'solo', persist: false });
   const sse = await listen(web);
   try {
-    assert.equal((await sse.waitFor((e) => e.t === 'state')).needsKey, true);
-    const askKey = await sse.waitFor((e) => e.t === 'ask' && e.kind === 'input' && e.secret);
-    await post(web, '/api/answer', { id: askKey.id, value: 'test-key' });
-    const askBase = await sse.waitFor((e) => e.t === 'ask' && e.kind === 'input' && e.optional);
-    await post(web, '/api/answer', { id: askBase.id, value: '' });
-    await sse.waitFor((e) => e.t === 'msg' && /Ключ сохранён/.test(e.text));
-    assert.equal(cfg.apiKey, 'test-key');
-    // Сам ключ в поток событий не попадает
+    assert.equal((await sse.waitFor((e) => e.t === 'state')).needsSetup, true);
+    // Пока доступ не настроен, задачи не принимаются
+    await post(web, '/api/input', { text: 'привет' });
+    await sse.waitFor((e) => e.t === 'msg' && /Сначала настройте доступ/.test(e.text));
+    await sse.waitFor((e) => e.t === 'state' && e.busy === false && sse.events.some((x) => x.t === 'msg'));
+
+    // Неверный ключ: проверка сообщает причину
+    await post(web, '/api/settings', { provider: 'anthropic', apiKey: 'wrong', baseUrl: mock.url });
+    let check = await (await post(web, '/api/test', {})).json();
+    assert.equal(check.ok, false);
+    assert.match(check.error, /API 401: bad key/);
+
+    // Верный ключ
+    const saved = await (await post(web, '/api/settings', { provider: 'anthropic', apiKey: 'test-key', baseUrl: mock.url, effort: 'high', maxCycles: 7 })).json();
+    assert.equal(saved.anthropic.hasKey, true);
+    assert.ok(!JSON.stringify(saved).includes('test-key')); // ключ наружу не отдаётся
+    assert.equal(saved.effort, 'high');
+    assert.equal(saved.maxCycles, 7);
+    check = await (await post(web, '/api/test', {})).json();
+    assert.deepEqual(check, { ok: true });
+    assert.equal((await sse.waitFor((e) => e.t === 'state' && e.needsSetup === false)).provider, 'anthropic');
+    const env = fs.readFileSync(path.join(TEST_HOME, '.env'), 'utf8');
+    assert.match(env, /ANTHROPIC_API_KEY=test-key/);
+    assert.match(env, /LCC_EFFORT=high/);
     assert.ok(!JSON.stringify(sse.events).includes('test-key'));
-    assert.match(fs.readFileSync(path.join(process.env.LCC_HOME, '.env'), 'utf8'), /ANTHROPIC_API_KEY=test-key/);
 
     await post(web, '/api/input', { text: 'привет' });
     assert.equal((await sse.waitFor((e) => e.t === 'text')).role, 'solo');
+    await sse.waitFor((e) => e.t === 'state' && e.busy === false && e.tokens.output > 0);
+
+    // Переход на локальную модель: список моделей, проверка сервера, работа
+    assert.deepEqual((await get(web, `/api/models?url=${encodeURIComponent(local.url)}`)).models, ['main-model', 'small-model']);
+    await post(web, '/api/settings', { provider: 'local', localUrl: local.url, model: 'not-installed' });
+    check = await (await post(web, '/api/test', {})).json();
+    assert.match(check.error, /Модель not-installed не скачана[\s\S]*ollama pull not-installed/);
+    await post(web, '/api/settings', { provider: 'local', localUrl: local.url, model: 'main-model' });
+    assert.deepEqual(await (await post(web, '/api/test', {})).json(), { ok: true });
+    const before = local.requests.length;
+    await post(web, '/api/input', { text: 'ещё раз' });
+    await sse.waitFor((e) => e.t === 'state' && e.busy === false && e.provider === 'local' && local.requests.length > before);
+    assert.equal(local.requests[local.requests.length - 1].body.model, 'main-model');
+
+    // Недопустимые значения отклоняются
+    assert.equal((await post(web, '/api/settings', { baseUrl: 'ftp://x' })).status, 400);
+    assert.equal((await post(web, '/api/settings', { maxCycles: -1 })).status, 400);
+    assert.equal((await post(web, '/api/settings', { provider: 'other' })).status, 400);
+
+    const view = await get(web, '/api/memory');
+    assert.equal(view.memory, '');
+    assert.match(view.journal, /Журнал пуст|готово/);
   } finally {
     sse.stop();
     web.close();
     mock.server.close();
-    delete process.env.ANTHROPIC_API_KEY;
+    local.server.close();
+    for (const k of ['ANTHROPIC_API_KEY', 'ANTHROPIC_BASE_URL', 'LCC_PROVIDER', 'LCC_LOCAL_URL', 'LCC_MODEL', 'LCC_EFFORT', 'LCC_MAX_CYCLES']) delete process.env[k];
+    fs.rmSync(path.join(TEST_HOME, '.env'), { force: true });
+  }
+});
+
+test('веб: диалог переживает перезапуск, очистка стирает его, память остаётся', async () => {
+  const mock = await startMock();
+  const cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'lcc-web-'));
+  const cfg = () => Object.assign(config(cwd, mock.url), { memory: true, autoApprove: true });
+  let web = await startWeb({ cfg: cfg(), mode: 'solo' });
+  let sse = await listen(web);
+  try {
+    await post(web, '/api/input', { text: 'привет' });
+    await sse.waitFor((e) => e.t === 'textEnd');
+    await sse.waitFor((e) => e.t === 'state' && e.busy === false && e.tokens.output > 0);
+    const bootId = sse.events.find((e) => e.t === 'state').bootId;
+    sse.stop();
+    web.close();
+    await web.closed;
+
+    // Новый запуск на том же адресе: история на месте, текст склеен в одно событие
+    web = await startWeb({ cfg: cfg(), mode: 'solo', port: web.port, token: web.token });
+    sse = await listen(web);
+    const state = await sse.waitFor((e) => e.t === 'state');
+    assert.notEqual(state.bootId, bootId);
+    assert.equal((await sse.waitFor((e) => e.t === 'user')).text, 'привет');
+    assert.equal((await sse.waitFor((e) => e.t === 'text')).delta, 'solo ok');
+    assert.equal(sse.events.filter((e) => e.t === 'text').length, 1);
+
+    // Очистка: клиенты получают reset, файл диалога пустеет, а память сохраняет опыт разговора
+    await post(web, '/api/input', { text: 'ещё вопрос' });
+    await sse.waitFor((e) => e.t === 'state' && e.busy === false && sse.events.filter((x) => x.t === 'textEnd').length === 1);
+    await post(web, '/api/input', { text: '/clear' });
+    await sse.waitFor((e) => e.t === 'reset');
+    await sse.waitFor((e) => e.t === 'msg' && /Диалог очищен/.test(e.text));
+    const saved = fs.readFileSync(path.join(TEST_HOME, 'session', 'events.jsonl'), 'utf8');
+    assert.ok(!saved.includes('привет') && !saved.includes('ещё вопрос'), saved);
+    assert.match((await get(web, '/api/memory')).memory, /hello\.js печатает приветствие/);
+    assert.equal(web.session.orchestrator.agents.solo.messages.length, 0);
+  } finally {
+    sse.stop();
+    web.close();
+    mock.server.close();
+  }
+});
+
+test('веб: команда, меняющая версию приложения, завершает сервер с запросом перезапуска', async () => {
+  const cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'lcc-web-'));
+  const web = await startWeb({ cfg: config(cwd, 'http://127.0.0.1:9'), persist: false });
+  const sse = await listen(web);
+  try {
+    const { prepareStaging, activate } = await import('../src/self/improve.js');
+    prepareStaging();
+    activate();
+    await post(web, '/api/input', { text: '/self undo' });
+    await sse.waitFor((e) => e.t === 'msg' && /Перезапускаюсь/.test(e.text));
+    assert.equal(await web.closed, 'restart');
+  } finally {
+    sse.stop();
+    web.close();
   }
 });

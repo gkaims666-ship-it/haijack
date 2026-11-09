@@ -164,14 +164,17 @@ export function loadProjectInstructions(cwd) {
   return null;
 }
 
-export function buildSystemPrompt(role, cwd) {
+export function buildSystemPrompt(role, cwd, memory = '') {
   const parts = [BASE_POLICY];
   if (USES_ENGINEERING.has(role)) parts.push(ENGINEERING);
   parts.push(ROLE[role]);
-  // Дата без времени: системный промт должен оставаться неизменным в течение сессии, иначе не работает кэш
+  // Дата без времени: системный промт должен оставаться неизменным в течение задачи, иначе не работает кэш
   parts.push(`# Среда\n${platformPromptBlock(cwd)}\nДата: ${new Date().toISOString().slice(0, 10)}`);
   const proj = loadProjectInstructions(cwd);
   if (proj) parts.push(`# Инструкции проекта (${proj.name}) — имеют приоритет над общими стандартами\n${proj.text}`);
+  if (memory) {
+    parts.push(`# Память о прошлой работе\nЗаписи из прошлых задач и сессий. Это подсказки, а не истина: код мог измениться — сверяйся с файлами.\n\n${memory}`);
+  }
   return parts.join('\n\n');
 }
 

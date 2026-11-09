@@ -23,7 +23,7 @@ function findBinary(names) {
   return found;
 }
 
-function nodeBinary() {
+export function nodeBinary() {
   // В собранном exe и в Android-приложении process.execPath — это не node, запускать его нельзя
   const self = path.basename(process.execPath).toLowerCase();
   if (self === 'node' || self === 'node.exe') return process.execPath;

@@ -40,6 +40,8 @@ export function scenario(rawSystem, messages) {
   const lastUser = messages[n - 1];
   const lastText = textOf(lastUser.content);
 
+  if (system.includes('долговременную память')) return [[text('## Тестовый проект\n- hello.js печатает приветствие; проверка: node hello.js')], 'end_turn'];
+  if (system.includes('Ответь одним словом')) return [[text('pong')], 'end_turn'];
   if (system.includes('Agent-Architect')) {
     if (lastText.includes('ВОПРОС')) return [[text('РЕЖИМ: ОТВЕТ\nЭто ответ на вопрос.')], 'end_turn'];
     if (n === 1) return [[tool('t1', 'list_dir', { path: '.' })], 'tool_use'];
@@ -86,5 +88,90 @@ export function startMock() {
   });
   return new Promise((resolve) => {
     server.listen(0, '127.0.0.1', () => resolve({ server, requests, url: `http://127.0.0.1:${server.address().port}` }));
+  });
+}
+
+
+// ---------- мок сервера с OpenAI-совместимым API (Ollama, LM Studio) ----------
+//
+// style:
+//   'native' — вызовы инструментов в поле tool_calls, аргументы разбиты на фрагменты
+//   'text'   — модель «думает» в <think> и пишет вызовы текстом в <tool_call>
+// Модели из failing отвечают HTTP 500 (как Ollama при нехватке памяти); из hanging — молчат.
+
+function openAiSse(res, blocks, stop, style) {
+  res.writeHead(200, { 'content-type': 'text/event-stream' });
+  const send = (delta, finish = null) => res.write(`data: ${JSON.stringify({ choices: [{ index: 0, delta, finish_reason: finish }] })}\n\n`);
+  const chunked = (str, size, fn) => { for (let i = 0; i < str.length; i += size) fn(str.slice(i, i + size)); };
+  const texts = blocks.filter((b) => b.type === 'text');
+  const tools = blocks.filter((b) => b.type === 'tool_use');
+
+  if (style === 'text') {
+    let out = '<think>\nНадо подумать, что делать дальше.\n</think>\n\n';
+    out += texts.map((b) => b.text).join('');
+    for (const t of tools) out += `\n<tool_call>\n${JSON.stringify({ name: t.name, arguments: t.input })}\n</tool_call>`;
+    chunked(out, 5, (part) => send({ content: part })); // мелкие куски: теги приходят разорванными
+    send({}, 'stop');
+  } else {
+    send({ role: 'assistant', content: '' });
+    for (const b of texts) chunked(b.text, 7, (part) => send({ content: part }));
+    tools.forEach((t, index) => {
+      // Как в настоящем потоке: id и имя — в первом фрагменте, аргументы — частями
+      send({ tool_calls: [{ index, id: t.id, type: 'function', function: { name: t.name, arguments: '' } }] });
+      chunked(JSON.stringify(t.input), 9, (part) => send({ tool_calls: [{ index, function: { arguments: part } }] }));
+    });
+    send({}, stop === 'tool_use' ? 'tool_calls' : 'stop');
+  }
+  res.write(`data: ${JSON.stringify({ choices: [], usage: { prompt_tokens: 11, completion_tokens: 7 } })}\n\n`);
+  res.write('data: [DONE]\n\n');
+  res.end();
+}
+
+/** Сообщения OpenAI -> формат, который понимает scenario() */
+function fromOpenAI(messages) {
+  const system = messages.filter((m) => m.role === 'system').map((m) => m.content).join('\n');
+  const rest = [];
+  for (const m of messages.filter((x) => x.role !== 'system')) {
+    if (m.role === 'tool') {
+      const block = { type: 'tool_result', tool_use_id: m.tool_call_id, content: m.content };
+      const last = rest[rest.length - 1];
+      if (last?.role === 'user' && Array.isArray(last.content)) last.content.push(block);
+      else rest.push({ role: 'user', content: [block] });
+    } else if (m.role === 'assistant') {
+      rest.push({ role: 'assistant', content: [{ type: 'text', text: m.content || '' }, ...(m.tool_calls || []).map((c) => ({ type: 'tool_use', id: c.id }))] });
+    } else rest.push({ role: 'user', content: m.content });
+  }
+  return { system, messages: rest };
+}
+
+export function startOpenAIMock({ style = 'native', installed = ['main-model', 'small-model'], failing = [], hanging = [] } = {}) {
+  const requests = [];
+  const server = http.createServer((req, res) => {
+    const url = new URL(req.url, 'http://local');
+    if (req.method === 'GET' && url.pathname === '/api/tags') {
+      res.writeHead(200, { 'content-type': 'application/json' });
+      return res.end(JSON.stringify({ models: installed.map((name) => ({ name })) }));
+    }
+    if (req.method === 'GET' && url.pathname === '/v1/models') {
+      res.writeHead(200, { 'content-type': 'application/json' });
+      return res.end(JSON.stringify({ data: installed.map((id) => ({ id })) }));
+    }
+    let body = '';
+    req.on('data', (d) => { body += d; });
+    req.on('end', () => {
+      const json = JSON.parse(body);
+      requests.push({ headers: req.headers, body: json });
+      if (hanging.includes(json.model)) return; // не отвечаем: клиент должен сработать по таймауту
+      if (failing.includes(json.model)) {
+        res.writeHead(500, { 'content-type': 'application/json' });
+        return res.end(JSON.stringify({ error: { message: 'model requires more system memory (20.1 GiB) than is available (7.6 GiB)' } }));
+      }
+      const { system, messages } = fromOpenAI(json.messages);
+      const [blocks, stop] = scenario(system, messages);
+      return openAiSse(res, blocks, stop, style);
+    });
+  });
+  return new Promise((resolve) => {
+    server.listen(0, '127.0.0.1', () => resolve({ server, requests, url: `http://127.0.0.1:${server.address().port}/v1` }));
   });
 }
