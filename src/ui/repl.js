@@ -48,6 +48,8 @@ class LineReader {
   async readInput(prompt, contPrompt) {
     let line = await this.next(prompt);
     if (line === null) return null;
+    // Склейка нужна только для вставки в терминале; команды из файла или канала идут по одной на строку
+    if (!this.rl.terminal) return line;
     const parts = [line];
     for (;;) {
       await new Promise((r) => setTimeout(r, 30)); // вставка приходит пачкой строк
@@ -84,7 +86,7 @@ class LineReader {
   close() { this.saveHistory(); this.rl.close(); }
 }
 
-export async function startRepl({ cfg, session, renderer, usage }) {
+export async function startRepl({ cfg, session, renderer, usage, notices = [] }) {
   const reader = new LineReader();
   renderer.question = (q) => reader.ask(q);
   let lastSigint = 0;
@@ -112,18 +114,26 @@ export async function startRepl({ cfg, session, renderer, usage }) {
     `${c.dim('Строка с "\\" в конце продолжается на следующей; многострочный текст можно вставлять как есть.')}\n`,
   );
 
-  const promptStr = () => `\n${c.bold(c.cyan(session.mode === 'solo' ? sym.arrow : `[${session.mode}] ${sym.arrow}`))} `;
+  for (const n of notices) renderer.warn(n);
 
+  const promptStr = () => {
+    const tags = [session.mode === 'solo' ? '' : session.mode, session.target === 'self' ? 'приложение' : ''].filter(Boolean).join(' · ');
+    return `\n${c.bold(c.cyan(tags ? `[${tags}] ${sym.arrow}` : sym.arrow))} `;
+  };
+
+  let outcome;
   for (;;) {
     const input = await reader.readInput(promptStr(), c.dim('… '));
     if (input === null) break;
     if (!input.trim()) continue;
     const before = usage.calls;
-    if ((await session.handle(input)) === 'exit') break;
+    outcome = await session.handle(input);
+    if (outcome === 'exit' || outcome === 'restart') break;
     if (usage.calls !== before) {
       const t = usage.totals();
       process.stdout.write(c.dim(`${hr()}\nтокены за сессию: вход ${t.input.toLocaleString('ru')}, выход ${t.output.toLocaleString('ru')}\n`));
     }
   }
   reader.close();
+  return outcome === 'restart' ? 'restart' : 'exit';
 }

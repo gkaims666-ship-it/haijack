@@ -2,16 +2,78 @@
 // Рендерер реализует тот же интерфейс, что и терминальный (src/ui/renderer.js).
 
 import crypto from 'node:crypto';
+import fs from 'node:fs';
+import path from 'node:path';
 import { argSummary, resultSummary } from '../ui/summary.js';
 
-const BUFFER_LIMIT = 6000;
+const BUFFER_LIMIT = 6000;   // событий в памяти
+const PERSIST_LIMIT = 3000;  // событий, восстанавливаемых с диска
+
+const strip = ({ seq, ...event }) => event; // номера на диске не нужны: они назначаются заново при загрузке
 
 export class EventHub {
-  constructor() {
+  /**
+   * @param {{file?: string}} o  file — куда сохранять диалог, чтобы он переживал перезапуск
+   */
+  constructor({ file } = {}) {
     this.seq = 0;
     this.buffer = [];          // события для повторной отправки при переподключении
     this.listeners = new Set();
     this.pending = new Map();  // id вопроса -> { resolve, secret }
+    this.file = file;
+    this.tail = null;          // склеиваемый кусок потока (текст агента или вывод команды), ещё не записанный
+    if (file) {
+      try { fs.mkdirSync(path.dirname(file), { recursive: true }); } catch { this.file = undefined; } // нет доступа — работаем без сохранения
+      this.#load();
+    }
+  }
+
+  /** Восстанавливает диалог с диска. Вопросы без ответа отбрасываются: их уже некому задавать. */
+  #load() {
+    let events = [];
+    try {
+      events = fs.readFileSync(this.file, 'utf8').split('\n').filter(Boolean)
+        .map((l) => { try { return JSON.parse(l); } catch { return null; } }).filter(Boolean);
+    } catch { return; }
+    const answered = new Set(events.filter((e) => e.t === 'askDone').map((e) => e.id));
+    events = events.filter((e) => (e.t !== 'ask' && e.t !== 'askDone') || answered.has(e.id));
+    const reset = events.map((e) => e.t).lastIndexOf('reset');
+    if (reset > 0) events = events.slice(reset);
+    events = events.slice(-PERSIST_LIMIT);
+    this.buffer = events.map((e, i) => ({ ...e, seq: i + 1 }));
+    this.seq = this.buffer.length;
+    this.#rewrite();
+  }
+
+  #rewrite() {
+    if (!this.file) return;
+    try {
+      fs.mkdirSync(path.dirname(this.file), { recursive: true });
+      fs.writeFileSync(this.file, this.buffer.map((e) => JSON.stringify(strip(e))).join('\n') + (this.buffer.length ? '\n' : ''));
+    } catch { /* сохранение диалога — удобство, а не необходимость */ }
+  }
+
+  #append(event) {
+    try { fs.appendFileSync(this.file, JSON.stringify(strip(event)) + '\n'); } catch { /* см. выше */ }
+  }
+
+  /** На диск текст агента и вывод команд пишутся целыми кусками, а не по одной дельте */
+  #persist(event) {
+    if (!this.file) return;
+    const key = event.t === 'text' ? `text:${event.role}` : event.t === 'cmd' ? `cmd:${event.shell ? 1 : 0}` : null;
+    if (key && this.tail?.key === key) {
+      if (event.t === 'text') this.tail.event.delta += event.delta; else this.tail.event.chunk += event.chunk;
+      return;
+    }
+    this.flush();
+    if (key) this.tail = { key, event: { ...event } };
+    else this.#append(event);
+  }
+
+  flush() {
+    if (!this.tail) return;
+    this.#append(this.tail.event);
+    this.tail = null;
   }
 
   /** volatile-события (индикатор «думает», состояние) не сохраняются в истории */
@@ -20,6 +82,7 @@ export class EventHub {
     if (!volatile) {
       this.buffer.push(item);
       if (this.buffer.length > BUFFER_LIMIT) this.buffer.splice(0, this.buffer.length - BUFFER_LIMIT);
+      this.#persist(item);
     }
     for (const fn of this.listeners) fn(item);
   }
@@ -31,6 +94,14 @@ export class EventHub {
   subscribe(fn) {
     this.listeners.add(fn);
     return () => this.listeners.delete(fn);
+  }
+
+  /** Очищает показанный диалог у всех подключённых клиентов и на диске */
+  clear() {
+    this.tail = null;
+    this.buffer = [];
+    this.emit({ t: 'reset' });
+    this.#rewrite();
   }
 
   /** Задаёт вопрос пользователю и ждёт ответа из браузера */

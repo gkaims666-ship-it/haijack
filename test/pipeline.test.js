@@ -1,3 +1,4 @@
+import './isolate.js';
 // Сквозной тест конвейера на мок-сервере: Architect -> Coder -> Reviewer(ИСПРАВИТЬ) -> Coder -> Reviewer(OK) -> Executor(PASS)
 
 import { test } from 'node:test';
