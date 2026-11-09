@@ -1,0 +1,93 @@
+plugins {
+    id 'com.android.application'
+}
+
+// Версия берётся из package.json в корне репозитория — единый источник для всех сборок
+def pkg = new groovy.json.JsonSlurper().parse(new File(rootDir, '../package.json'))
+def parts = pkg.version.tokenize('.').collect { it as int }
+
+android {
+    namespace 'com.localclaudecode.app'
+    compileSdk 34
+
+    defaultConfig {
+        applicationId 'com.localclaudecode.app'
+        minSdk 24            // минимум для nodejs-mobile 18
+        targetSdk 34
+        versionCode parts[0] * 10000 + parts[1] * 100 + parts[2]
+        versionName pkg.version
+
+        ndk {
+            // arm64 и arm — телефоны; x86_64 — эмулятор (на нём приложение проверяется в CI)
+            abiFilters 'arm64-v8a', 'armeabi-v7a', 'x86_64'
+        }
+        externalNativeBuild {
+            cmake {
+                arguments '-DANDROID_STL=c++_shared'
+            }
+        }
+    }
+
+    externalNativeBuild {
+        cmake {
+            path 'CMakeLists.txt'
+        }
+    }
+
+    // Код программы (bin/, src/, package.json) копируется в ассеты перед сборкой — см. задачу ниже
+    sourceSets {
+        main {
+            assets.srcDir(layout.buildDirectory.dir('generated/lcc-assets'))
+        }
+    }
+
+    signingConfigs {
+        // По умолчанию — ключ из репозитория (app/project.keystore, пароль открыт): все сборки подписаны
+        // одинаково, поэтому новая версия ставится поверх старой без потери данных приложения.
+        // Свой закрытый ключ задаётся переменными LCC_KEYSTORE_FILE / _PASSWORD / _KEY_ALIAS / _KEY_PASSWORD.
+        shared {
+            def custom = System.getenv('LCC_KEYSTORE_FILE')
+            storeFile custom ? file(custom) : file('project.keystore')
+            storePassword System.getenv('LCC_KEYSTORE_PASSWORD') ?: 'android'
+            keyAlias System.getenv('LCC_KEY_ALIAS') ?: 'lcc'
+            keyPassword System.getenv('LCC_KEY_PASSWORD') ?: 'android'
+        }
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled false
+            signingConfig signingConfigs.shared
+        }
+        debug {
+            signingConfig signingConfigs.shared
+        }
+    }
+
+    lint {
+        checkReleaseBuilds false
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+
+    packaging {
+        jniLibs {
+            // Библиотеки сжимаются в APK и распаковываются при установке: файл для скачивания заметно меньше
+            useLegacyPackaging true
+        }
+    }
+}
+
+def copyLccSources = tasks.register('copyLccSources', Copy) {
+    from(new File(rootDir, '..')) {
+        include 'bin/**', 'src/**', 'package.json'
+    }
+    into layout.buildDirectory.dir('generated/lcc-assets/lcc')
+}
+
+tasks.named('preBuild') {
+    dependsOn copyLccSources
+}

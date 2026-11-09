@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Local Claude Code</string>
+    <string name="starting">Запуск…</string>
+    <string name="start_failed">Не удалось запустить программу. Подробности записаны в файл %1$s</string>
+    <string name="node_exited">Программа завершилась (код %1$d). Закройте приложение и откройте его снова.</string>
+    <string name="storage_title">Доступ к файлам</string>
+    <string name="storage_message">Чтобы работать с проектами в памяти телефона, разрешите приложению доступ к файлам. Без него проекты будут храниться только в собственной папке приложения.</string>
+    <string name="storage_allow">Разрешить</string>
+    <string name="storage_skip">Не сейчас</string>
+</resources>

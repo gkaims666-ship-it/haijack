@@ -1,0 +1,130 @@
+name: Сборка Android (apk)
+
+on:
+  push:
+    branches: [android]
+    tags: ['android-v*']
+  workflow_dispatch:
+
+permissions:
+  contents: write   # публикация релиза с apk
+
+concurrency:
+  group: build-android-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Тесты ядра
+        run: npm test
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.11.1'
+
+      - name: Node.js для Android (nodejs-mobile)
+        run: bash android/fetch-node.sh
+
+      - name: Сборка APK
+        working-directory: android
+        run: gradle --no-daemon assembleRelease
+
+      - name: Проверка содержимого APK
+        run: |
+          apk=android/app/build/outputs/apk/release/app-release.apk
+          cp "$apk" local-claude-code.apk
+          unzip -l local-claude-code.apk > listing.txt
+          for f in lib/arm64-v8a/libnode.so lib/arm64-v8a/libnative-lib.so lib/arm64-v8a/libc++_shared.so \
+                   lib/armeabi-v7a/libnode.so lib/x86_64/libnode.so \
+                   assets/lcc/bin/lcc.js assets/lcc/src/index.js assets/lcc/src/web/page.js assets/lcc/package.json; do
+            grep -q " $f\$" listing.txt || { echo "В APK нет $f"; grep -E "lib/|assets/" listing.txt | head -50; exit 1; }
+          done
+          "$ANDROID_HOME"/build-tools/$(ls "$ANDROID_HOME"/build-tools | sort -V | tail -n 1)/apksigner verify --print-certs local-claude-code.apk | head -3
+          sha256sum local-claude-code.apk | tee local-claude-code.apk.sha256
+          ls -la local-claude-code.apk
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: local-claude-code-apk
+          path: |
+            local-claude-code.apk
+            local-claude-code.apk.sha256
+          if-no-files-found: error
+
+  emulator-test:
+    name: Запуск в эмуляторе
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: local-claude-code-apk
+
+      - name: Доступ к KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+
+      - name: Установка и запуск приложения
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 30
+          arch: x86_64
+          target: default
+          disable-animations: true
+          script: bash android/emulator-test.sh local-claude-code.apk
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: emulator-screen
+          path: emulator-screen.png
+          if-no-files-found: ignore
+
+  release:
+    name: Публикация релиза
+    needs: [build, emulator-test]
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: local-claude-code-apk
+      - name: Релиз
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          version=$(node -p "require('./package.json').version")
+          if [[ "$GITHUB_REF" == refs/tags/* ]]; then
+            tag="$GITHUB_REF_NAME"
+            title="Android $version"
+            flags=""
+          else
+            tag="android-latest"
+            title="Android — последняя сборка ($version)"
+            flags="--prerelease"
+            gh release delete "$tag" --cleanup-tag --yes 2>/dev/null || true
+          fi
+          gh release create "$tag" local-claude-code.apk local-claude-code.apk.sha256 \
+            --target "$GITHUB_SHA" --title "$title" $flags \
+            --notes "Приложение для Android 7.0+ (arm64, arm, x86_64) со встроенным Node.js. Коммит ${GITHUB_SHA::7}.
+
+          Установка: скачайте \`local-claude-code.apk\` на телефон, откройте файл и разрешите установку из этого источника."

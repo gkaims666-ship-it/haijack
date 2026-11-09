@@ -1,0 +1,7 @@
+app/libnode/
+app/build/
+build/
+.gradle/
+local.properties
+.cxx/
+app/.cxx/

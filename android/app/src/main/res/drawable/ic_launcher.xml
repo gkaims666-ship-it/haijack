@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Четыре полосы эстафеты — четыре агента -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="48dp"
+    android:height="48dp"
+    android:viewportWidth="48"
+    android:viewportHeight="48">
+    <path android:fillColor="#18212B" android:pathData="M10,2h28a8,8 0,0 1,8 8v28a8,8 0,0 1,-8 8h-28a8,8 0,0 1,-8 -8v-28a8,8 0,0 1,8 -8z" />
+    <path android:fillColor="#B39DFA" android:pathData="M10,13h28v4h-28z" />
+    <path android:fillColor="#4FD1BD" android:pathData="M10,19.5h21v4h-21z" />
+    <path android:fillColor="#F5B14C" android:pathData="M10,26h25v4h-25z" />
+    <path android:fillColor="#7CB0FF" android:pathData="M10,32.5h15v4h-15z" />
+</vector>
