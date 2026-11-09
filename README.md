@@ -15,6 +15,17 @@
 
 Ветка `main` содержит общее ядро. Ветки `windows` и `android` добавляют к нему только упаковку под свою платформу.
 
+## Сборка exe (ветка `windows`)
+
+```bash
+node scripts/build-exe.mjs      # нужен Node.js 22+; результат — dist/lcc.exe
+node test/e2e.mjs dist/lcc.exe  # проверка собранного файла на мок-сервере API
+```
+
+Скрипт объединяет код в один файл (esbuild) и встраивает его в копию `node.exe` по механизму Node.js Single Executable Application. GitHub Actions (`.github/workflows/build-windows.yml`) делает это на каждом push в ветку `windows`, проверяет exe сквозным тестом и публикует релиз `windows-latest`. Тег вида `windows-v1.2.0` создаёт постоянный релиз.
+
+`lcc.exe` не требует установленного Node.js. Но командам, которые запускает Executor (тесты и сборка вашего проекта), нужны их собственные инструменты — `node`, `python`, `git` и так далее. Файл не подписан сертификатом, поэтому SmartScreen при первом запуске покажет предупреждение.
+
 ## Установка из исходников
 
 **Windows.** Поставьте [Node.js LTS](https://nodejs.org) (или `winget install OpenJS.NodeJS.LTS`), откройте новое окно терминала и запустите `setup.bat` из папки программы. Затем в папке своего проекта выполните `lcc`.

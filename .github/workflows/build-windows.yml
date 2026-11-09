@@ -1,0 +1,72 @@
+name: Сборка Windows (exe)
+
+on:
+  push:
+    branches: [windows]
+    tags: ['windows-v*']
+  workflow_dispatch:
+
+permissions:
+  contents: write   # публикация релиза с exe
+
+concurrency:
+  group: build-windows-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Тесты
+        run: npm test
+
+      - name: Сборка lcc.exe
+        run: node scripts/build-exe.mjs
+
+      - name: Проверка exe на мок-сервере API
+        run: node test/e2e.mjs dist/lcc.exe
+
+      - name: Контрольная сумма
+        shell: pwsh
+        run: |
+          $hash = (Get-FileHash dist/lcc.exe -Algorithm SHA256).Hash.ToLower()
+          "$hash  lcc.exe" | Out-File -Encoding ascii dist/lcc.exe.sha256
+          Get-Content dist/lcc.exe.sha256
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: lcc-windows-x64
+          path: |
+            dist/lcc.exe
+            dist/lcc.exe.sha256
+          if-no-files-found: error
+
+      - name: Публикация релиза
+        if: github.event_name == 'push'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          version=$(node -p "require('./package.json').version")
+          if [[ "$GITHUB_REF" == refs/tags/* ]]; then
+            tag="$GITHUB_REF_NAME"
+            title="Windows $version"
+            flags=""
+          else
+            # Сборка с ветки: один постоянно обновляемый релиз
+            tag="windows-latest"
+            title="Windows — последняя сборка ($version)"
+            flags="--prerelease"
+            gh release delete "$tag" --cleanup-tag --yes 2>/dev/null || true
+          fi
+          gh release create "$tag" dist/lcc.exe dist/lcc.exe.sha256 \
+            --target "$GITHUB_SHA" --title "$title" $flags \
+            --notes "Один файл \`lcc.exe\` для Windows x64, Node.js внутри. Коммит ${GITHUB_SHA::7}.
+
+          Запуск: откройте терминал в папке проекта и выполните \`путь\\к\\lcc.exe\`. Файл не подписан, поэтому SmartScreen при первом запуске покажет предупреждение: «Подробнее» → «Выполнить в любом случае»."
