@@ -146,6 +146,8 @@ function fromOpenAI(messages) {
 
 export function startOpenAIMock({ style = 'native', installed = ['main-model', 'small-model'], failing = [], hanging = [] } = {}) {
   const requests = [];
+  const pulls = [];
+  installed = [...installed];
   const server = http.createServer((req, res) => {
     const url = new URL(req.url, 'http://local');
     if (req.method === 'GET' && url.pathname === '/api/tags') {
@@ -160,6 +162,31 @@ export function startOpenAIMock({ style = 'native', installed = ['main-model', '
     req.on('data', (d) => { body += d; });
     req.on('end', () => {
       const json = JSON.parse(body);
+      if (url.pathname === '/api/pull') {
+        // Как Ollama: поток строк JSON с ходом загрузки по слоям
+        pulls.push(json.model);
+        res.writeHead(200, { 'content-type': 'application/x-ndjson' });
+        const line = (o) => res.write(`${JSON.stringify(o)}\n`);
+        line({ status: 'pulling manifest' });
+        if (/missing/.test(json.model)) { line({ error: 'pull model manifest: file does not exist' }); return res.end(); }
+        const steps = [[0, 0], [400, 0], [1000, 100], [1000, 1000]];
+        let i = 0;
+        const tick = () => {
+          if (res.destroyed) return undefined;
+          if (i < steps.length) {
+            line({ status: 'pulling aaa', digest: 'sha256:aaa', total: 1000, completed: steps[i][0] });
+            line({ status: 'pulling bbb', digest: 'sha256:bbb', total: 1000, completed: steps[i][1] });
+            i++;
+            return setTimeout(tick, /slow/.test(json.model) ? 400 : 5);
+          }
+          line({ status: 'verifying sha256 digest' });
+          line({ status: 'writing manifest' });
+          line({ status: 'success' });
+          installed.push(json.model);
+          return res.end();
+        };
+        return tick();
+      }
       requests.push({ headers: req.headers, body: json });
       if (hanging.includes(json.model)) return; // не отвечаем: клиент должен сработать по таймауту
       if (failing.includes(json.model)) {
@@ -172,6 +199,49 @@ export function startOpenAIMock({ style = 'native', installed = ['main-model', '
     });
   });
   return new Promise((resolve) => {
-    server.listen(0, '127.0.0.1', () => resolve({ server, requests, url: `http://127.0.0.1:${server.address().port}/v1` }));
+    server.listen(0, '127.0.0.1', () => resolve({ server, requests, pulls, installed, url: `http://127.0.0.1:${server.address().port}/v1` }));
+  });
+}
+
+
+// ---------- мок каталога Hugging Face ----------
+
+export function startHubMock() {
+  const repos = Array.from({ length: 45 }, (_, i) => ({ id: `author${i % 3}/Model-${String(i).padStart(2, '0')}-GGUF`, downloads: 100000 - i * 1000, likes: 45 - i, tags: ['gguf'] }));
+  const requests = [];
+  const server = http.createServer((req, res) => {
+    const url = new URL(req.url, `http://${req.headers.host}`);
+    requests.push(url.pathname + url.search);
+    const json = (status, body, headers = {}) => { res.writeHead(status, { 'content-type': 'application/json', ...headers }); res.end(JSON.stringify(body)); };
+    if (url.pathname === '/api/models') {
+      const q = (url.searchParams.get('search') || '').toLowerCase();
+      const limit = Number(url.searchParams.get('limit')) || 30;
+      const offset = Number(url.searchParams.get('cursor')) || 0;
+      const found = repos.filter((r) => r.id.toLowerCase().includes(q));
+      const page = found.slice(offset, offset + limit);
+      const headers = {};
+      if (offset + limit < found.length) {
+        const next = new URL(url); next.searchParams.set('cursor', String(offset + limit));
+        headers.link = `<${next}>; rel="next"`;
+      }
+      return json(200, [...page, { id: 'bad id with spaces' }], headers);
+    }
+    if (url.pathname === '/api/models/author0/Model-00-GGUF') {
+      return json(200, { id: 'author0/Model-00-GGUF', siblings: [
+        { rfilename: 'README.md', size: 100 },
+        { rfilename: 'Model-00.Q8_0.gguf', size: 8 * 2 ** 30 },
+        { rfilename: 'Model-00.Q4_K_M.gguf', size: 4 * 2 ** 30 },
+        { rfilename: 'Model-00-IQ3_M.gguf', size: 3 * 2 ** 30 },
+        { rfilename: 'big/Model-00.F16-00001-of-00002.gguf', size: 9 * 2 ** 30 },
+        { rfilename: 'big/Model-00.F16-00002-of-00002.gguf', size: 7 * 2 ** 30 },
+        { rfilename: 'mmproj-Model-00-f16.gguf', size: 2 ** 30 },
+        { rfilename: 'custom-build.gguf', size: 2 ** 20 },
+      ] });
+    }
+    if (url.pathname === '/api/models/author0/Gated-GGUF') return json(401, { error: 'gated' });
+    return json(404, { error: 'Repository not found' });
+  });
+  return new Promise((resolve) => {
+    server.listen(0, '127.0.0.1', () => resolve({ server, requests, url: `http://127.0.0.1:${server.address().port}` }));
   });
 }

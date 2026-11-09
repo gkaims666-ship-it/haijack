@@ -215,6 +215,26 @@ select.chip option { background: var(--panel); color: var(--text); }
 .dialog h2 { margin: 0 0 6px; font-size: 17px; } .dialog p { margin: 0 0 16px; color: var(--muted); }
 .dialog .row { display: flex; gap: 8px; justify-content: flex-end; }
 
+/* ---------- каталог моделей ---------- */
+#catalog { z-index: 41; }
+#catalog-scrim { z-index: 40; }
+.cat-list { display: grid; gap: 6px; margin-top: 12px; }
+.cat-item { display: flex; align-items: center; justify-content: space-between; gap: 12px; width: 100%; text-align: left; padding: 10px 12px; border: 1px solid var(--line); border-radius: 10px; background: var(--bg); transition: border-color .12s; }
+button.cat-item:hover { border-color: var(--line-strong); }
+.cat-item .id { font: 13px/1.4 var(--mono); overflow-wrap: anywhere; min-width: 0; flex: 1; }
+.cat-item .meta { color: var(--faint); font-size: 12.5px; white-space: nowrap; flex: none; }
+.cat-item .btn { flex: none; }
+.cat-back { margin: 12px 0 0 -8px; }
+.cat-repo { margin: 6px 0 0; font: 14px/1.4 var(--mono); overflow-wrap: anywhere; }
+.pull { margin-top: 14px; padding: 12px; border: 1px solid var(--line-strong); border-radius: 12px; background: var(--bg); }
+.pull .name { font: 13px/1.4 var(--mono); overflow-wrap: anywhere; }
+.pull .track { height: 6px; border-radius: 3px; background: var(--line); overflow: hidden; margin: 10px 0 8px; }
+.pull .fill { height: 100%; width: 0; border-radius: 3px; background: var(--relay); transition: width .3s; }
+.pull .fill.unknown { width: 35%; animation: seek 1.4s ease-in-out infinite alternate; }
+@keyframes seek { from { margin-left: 0; } to { margin-left: 65%; } }
+.pull .line { display: flex; justify-content: space-between; gap: 12px; color: var(--muted); font-size: 13px; }
+.pull .row { display: flex; gap: 8px; margin-top: 10px; flex-wrap: wrap; }
+
 @media (max-width: 560px) {
   .project { display: none; }
   .btn.send span { display: none; }
@@ -255,6 +275,7 @@ select.chip option { background: var(--panel); color: var(--text); }
             <button type="button" class="btn" id="l-load">Загрузить</button>
           </div>
           <small>Нужна модель с поддержкой вызова инструментов.</small></div>
+        <button type="button" class="btn small" id="l-catalog" style="margin-top:12px">Найти и скачать модель</button>
       </div>
 
       <div data-pane="remote" hidden>
@@ -341,6 +362,7 @@ select.chip option { background: var(--panel); color: var(--text); }
       <div class="field"><span>Модель</span>
         <div class="pair"><select class="input" id="s-model-l" aria-label="Модель"></select><button type="button" class="btn" id="s-load">Обновить</button></div>
         <small>Локальные модели работают без интернета, но пишут код заметно хуже моделей через API и чаще ошибаются в вызовах инструментов.</small></div>
+      <button type="button" class="btn small" id="s-catalog" style="margin-top:12px">Найти и скачать модель</button>
     </div>
 
     <h3>Работа</h3>
@@ -372,6 +394,41 @@ select.chip option { background: var(--panel); color: var(--text); }
     <pre class="block" id="m-journal"></pre>
   </div>
   <div class="sheet-foot"><button class="btn small" id="m-forget">Стереть память</button></div>
+</aside>
+
+<div class="scrim" id="catalog-scrim" hidden></div>
+<aside class="sheet" id="catalog" hidden aria-labelledby="catalog-title">
+  <div class="sheet-head"><h2 id="catalog-title">Модели</h2><button class="icon-btn" id="cat-close" aria-label="Закрыть"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg></button></div>
+  <div class="sheet-body">
+    <div class="pull" id="cat-pull" hidden>
+      <div class="name" id="cat-pull-name"></div>
+      <div class="track"><div class="fill" id="cat-pull-fill"></div></div>
+      <div class="line"><span id="cat-pull-status"></span><span id="cat-pull-percent"></span></div>
+      <div class="note error" id="cat-pull-error" role="alert" hidden></div>
+      <div class="row"><button type="button" class="btn small" id="cat-pull-cancel">Остановить</button><button type="button" class="btn small primary" id="cat-pull-use" hidden>Выбрать эту модель</button></div>
+    </div>
+
+    <div id="cat-search-view">
+      <label class="field"><span>Поиск на Hugging Face</span>
+        <input class="input" id="cat-q" type="search" placeholder="Например: qwen coder" autocapitalize="off" spellcheck="false">
+        <small>Все общедоступные модели в формате GGUF, сначала самые скачиваемые. Агентам подходит только модель с поддержкой вызова инструментов — это указано в её описании.</small></label>
+      <div class="note error" id="cat-error" role="alert" hidden></div>
+      <div class="cat-list" id="cat-list"></div>
+      <button type="button" class="btn small" id="cat-more" style="margin-top:10px" hidden>Показать ещё</button>
+
+      <h3>Модель из библиотеки Ollama</h3>
+      <div class="field"><span>Имя модели</span>
+        <div class="pair"><input class="input" id="cat-name" type="text" placeholder="qwen2.5-coder:14b" autocapitalize="off" spellcheck="false"><button type="button" class="btn" id="cat-name-pull">Скачать</button></div></div>
+    </div>
+
+    <div id="cat-files-view" hidden>
+      <button type="button" class="btn small quiet cat-back" id="cat-back">← К поиску</button>
+      <p class="cat-repo" id="cat-repo"></p>
+      <p class="note">Чем больше файл, тем точнее модель и тем больше памяти ей нужно. Модель должна целиком помещаться в память видеокарты или компьютера.</p>
+      <div class="note error" id="cat-files-error" role="alert" hidden></div>
+      <div class="cat-list" id="cat-files"></div>
+    </div>
+  </div>
 </aside>
 
 <div class="dialog" id="confirm" hidden role="alertdialog" aria-labelledby="c-title">
@@ -615,6 +672,7 @@ select.chip option { background: var(--panel); color: var(--text); }
     }
     if (!ev.busy) { setThinking(null); if (activeRole) { visited[activeRole] = true; activeRole = null; } }
     drawRelay();
+    if (ev.pull) drawPull(ev.pull);
     if (ev.needsSetup && $('login').hidden) openLogin();
     if (ev.needsSetup === false && !$('login').hidden && !loginBusy) $('login').hidden = true;
   }
@@ -641,6 +699,7 @@ select.chip option { background: var(--panel); color: var(--text); }
     switch (ev.t) {
       case 'state': applyState(ev); break;
       case 'reset': resetLog(); break;
+      case 'pull': drawPull(ev); break;
       case 'user':
         endSay(); visited = {}; activeRole = null; drawRelay();
         add(el('div', 'user', ev.text)); toBottom();
@@ -778,7 +837,10 @@ select.chip option { background: var(--panel); color: var(--text); }
   function show(sheet) { closeSheet(); openSheet = sheet; sheet.hidden = false; $('scrim').hidden = false; }
   $('scrim').onclick = closeSheet;
   Array.prototype.forEach.call(document.querySelectorAll('[data-close]'), function (b) { b.onclick = closeSheet; });
-  document.addEventListener('keydown', function (e) { if (e.key === 'Escape') closeSheet(); });
+  document.addEventListener('keydown', function (e) {
+    if (e.key !== 'Escape') return;
+    if (!$('catalog').hidden) closeCatalog(); else closeSheet();
+  });
   function confirmBox(title, text, yes, fn) {
     closeSheet();
     $('c-title').textContent = title; $('c-text').textContent = text; $('c-yes').textContent = yes;
@@ -812,6 +874,116 @@ select.chip option { background: var(--panel); color: var(--text); }
       .then(function () { button.disabled = false; });
   }
   function validRemote(url) { return /^https?:\/\/.+[?&]t=./.test(url); }
+
+  // ---------- каталог и скачивание моделей ----------
+  var catSource = null, catNext = '', catTimer = null, catQuery = null, pullState = null;
+  function formatSize(bytes) {
+    if (!bytes) return '';
+    var gb = bytes / 1073741824;
+    return gb >= 1 ? gb.toFixed(1).replace('.', ',') + ' ГБ' : Math.max(1, Math.round(bytes / 1048576)) + ' МБ';
+  }
+  function formatCount(n) { return n >= 1000000 ? (n / 1000000).toFixed(1).replace('.', ',') + ' млн' : n >= 1000 ? Math.round(n / 1000) + ' тыс.' : String(n); }
+  function closeCatalog() { $('catalog').hidden = true; $('catalog-scrim').hidden = true; }
+  // source: откуда открыт каталог — адрес сервера моделей и список, в который попадёт скачанная модель
+  function openCatalog(source) {
+    catSource = source;
+    $('catalog').hidden = false; $('catalog-scrim').hidden = false;
+    showSearch();
+    if (catQuery === null) runSearch('');
+    $('cat-q').focus();
+  }
+  function showSearch() { $('cat-search-view').hidden = false; $('cat-files-view').hidden = true; }
+  function runSearch(query, more) {
+    catQuery = query;
+    showError($('cat-error'), '');
+    var path = '/api/hf/search?q=' + encodeURIComponent(query) + (more && catNext ? '&cursor=' + encodeURIComponent(catNext) : '');
+    if (!more) { $('cat-list').textContent = ''; $('cat-list').appendChild(el('div', 'note', 'Ищу…')); }
+    $('cat-more').disabled = true;
+    api('GET', path).then(function (r) {
+      if (query !== catQuery) return; // пришёл ответ на устаревший запрос
+      if (!more) $('cat-list').textContent = '';
+      r.models.forEach(function (m) {
+        var item = el('button', 'cat-item'); item.type = 'button';
+        item.appendChild(el('span', 'id', m.id));
+        item.appendChild(el('span', 'meta', formatCount(m.downloads) + ' загрузок'));
+        item.onclick = function () { openRepo(m.id); };
+        $('cat-list').appendChild(item);
+      });
+      if (!more && !r.models.length) $('cat-list').appendChild(el('div', 'note', 'Ничего не найдено. Попробуйте другое название.'));
+      catNext = r.next || '';
+      $('cat-more').hidden = !catNext;
+    }).catch(function (e) {
+      if (!more) $('cat-list').textContent = '';
+      showError($('cat-error'), e.message);
+    }).then(function () { $('cat-more').disabled = false; });
+  }
+  function openRepo(repo) {
+    $('cat-search-view').hidden = true; $('cat-files-view').hidden = false;
+    $('cat-repo').textContent = repo;
+    showError($('cat-files-error'), '');
+    $('cat-files').textContent = ''; $('cat-files').appendChild(el('div', 'note', 'Загружаю список вариантов…'));
+    api('GET', '/api/hf/files?repo=' + encodeURIComponent(repo)).then(function (r) {
+      $('cat-files').textContent = '';
+      if (!r.variants.length) { $('cat-files').appendChild(el('div', 'note', 'В этом репозитории нет файлов GGUF.')); return; }
+      r.variants.forEach(function (v) {
+        var row = el('div', 'cat-item');
+        row.appendChild(el('span', 'id', v.tag));
+        row.appendChild(el('span', 'meta', formatSize(v.size)));
+        var get = el('button', 'btn small', 'Скачать'); get.type = 'button';
+        get.onclick = function () { startPull(v.name); };
+        row.appendChild(get);
+        $('cat-files').appendChild(row);
+      });
+    }).catch(function (e) { $('cat-files').textContent = ''; showError($('cat-files-error'), e.message); });
+  }
+  function startPull(name) {
+    var urlInput = catSource && catSource.url;
+    var body = { model: name };
+    if (urlInput) body.url = urlInput.value.trim() || urlInput.placeholder;
+    showError($('cat-error'), ''); showError($('cat-files-error'), '');
+    api('POST', '/api/pull', body).then(function () { $('catalog').querySelector('.sheet-body').scrollTop = 0; })
+      .catch(function (e) { showError($('cat-files-view').hidden ? $('cat-error') : $('cat-files-error'), e.message); });
+  }
+  function drawPull(p) {
+    pullState = p;
+    $('cat-pull').hidden = false;
+    $('cat-pull-name').textContent = p.model;
+    var fill = $('cat-pull-fill');
+    var unknown = p.percent === null && !p.done;
+    fill.className = 'fill' + (unknown ? ' unknown' : '');
+    fill.style.width = unknown ? '' : (p.done && !p.error ? 100 : p.percent || 0) + '%';
+    $('cat-pull-status').textContent = p.error ? '' : p.status;
+    $('cat-pull-percent').textContent = p.percent === null || p.error ? '' : p.percent + '%';
+    showError($('cat-pull-error'), p.error);
+    $('cat-pull-cancel').hidden = !!p.done;
+    $('cat-pull-use').hidden = !(p.done && !p.error);
+  }
+  $('cat-pull-cancel').onclick = function () { api('POST', '/api/pull/cancel', {}).catch(function (e) { showError($('cat-pull-error'), e.message); }); };
+  $('cat-pull-use').onclick = function () {
+    var model = pullState.model;
+    if (!catSource) { closeCatalog(); return; }
+    loadModels(catSource.url, catSource.select, catSource.button, catSource.error, model).then(function () {
+      // Сервер может показывать имя в своём виде; если точного совпадения нет, оставляем выбор пользователю
+      if (catSource.select.value !== model) showError(catSource.error, 'Модель скачана. Выберите её в списке.');
+      closeCatalog();
+    });
+  };
+  $('cat-q').addEventListener('input', function () {
+    clearTimeout(catTimer);
+    var q = this.value;
+    catTimer = setTimeout(function () { runSearch(q); }, 350);
+  });
+  $('cat-more').onclick = function () { runSearch(catQuery || '', true); };
+  $('cat-back').onclick = showSearch;
+  $('cat-close').onclick = closeCatalog;
+  $('catalog-scrim').onclick = closeCatalog;
+  $('cat-name-pull').onclick = function () {
+    var name = $('cat-name').value.trim();
+    if (!name) { $('cat-name').focus(); return; }
+    startPull(name);
+  };
+  $('l-catalog').onclick = function () { openCatalog({ url: $('l-local'), select: $('l-model'), button: $('l-load'), error: $('l-error') }); };
+  $('s-catalog').onclick = function () { openCatalog({ url: $('s-local'), select: $('s-model-l'), button: $('s-load'), error: $('s-error') }); };
 
   // ---------- вход ----------
   var loginTab = tabs($('login-tabs'), $('login-form'), function () { showError($('l-error'), ''); });

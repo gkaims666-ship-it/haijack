@@ -244,6 +244,71 @@ export async function checkLocalServer(local, model, signal) {
   return { ok: true, models, problem: '' };
 }
 
+export const MODEL_NAME = /^[\w.\-:/@]{1,300}$/;
+
+/**
+ * Скачивает модель на сервер Ollama (POST /api/pull) и сообщает о ходе загрузки.
+ * onProgress({ status, completed, total, percent }) — percent от 0 до 100 или null, пока размер неизвестен.
+ */
+export async function pullModel(local, name, { signal, onProgress } = {}) {
+  if (!MODEL_NAME.test(name)) throw new Error('Недопустимое имя модели');
+  const origin = local.baseUrl.replace(/\/v1$/, '');
+  const headers = { 'content-type': 'application/json' };
+  if (local.apiKey) headers.authorization = `Bearer ${local.apiKey}`;
+  let res;
+  try {
+    res = await fetch(`${origin}/api/pull`, { method: 'POST', headers, body: JSON.stringify({ model: name, name, stream: true }), signal });
+  } catch (err) {
+    if (signal?.aborted) throw abortError();
+    throw new ApiError(`Сервер моделей недоступен по адресу ${local.baseUrl}: ${err.cause?.code || err.message}. Запустите Ollama и повторите.`, 0);
+  }
+  if (res.status === 404 || res.status === 405) {
+    throw new ApiError('Этот сервер моделей не умеет скачивать модели по команде (так умеет только Ollama). Скачайте модель средствами самого сервера.', res.status);
+  }
+  if (!res.ok) {
+    const text = await res.text().catch(() => '');
+    let msg = text;
+    try { msg = JSON.parse(text).error || text; } catch { /* не JSON */ }
+    throw new ApiError(`Не удалось начать загрузку: ${String(msg).slice(0, 300) || `HTTP ${res.status}`}`, res.status);
+  }
+
+  // Ответ — поток строк JSON. У каждого слоя модели свой счётчик, общий ход складывается из них.
+  const layers = new Map();
+  const decoder = new TextDecoder();
+  let buf = '';
+  let last = '';
+  const handle = (line) => {
+    if (!line.trim()) return;
+    let ev;
+    try { ev = JSON.parse(line); } catch { return; }
+    if (ev.error) {
+      const text = String(ev.error);
+      throw new ApiError(/manifest|not found|does not exist/i.test(text)
+        ? `Модель ${name} не найдена. Проверьте имя.`
+        : `Загрузка прервана: ${text.slice(0, 300)}`, 0);
+    }
+    if (ev.digest && ev.total) layers.set(ev.digest, { total: ev.total, completed: ev.completed || 0 });
+    let total = 0;
+    let completed = 0;
+    for (const l of layers.values()) { total += l.total; completed += Math.min(l.completed, l.total); }
+    const percent = total ? Math.min(100, Math.floor((completed / total) * 100)) : null;
+    const key = `${ev.status}|${percent}`;
+    if (key !== last) { last = key; onProgress?.({ status: String(ev.status || ''), completed, total, percent }); }
+  };
+  try {
+    for await (const chunk of res.body) {
+      buf += decoder.decode(chunk, { stream: true });
+      let nl;
+      while ((nl = buf.indexOf('\n')) !== -1) { handle(buf.slice(0, nl)); buf = buf.slice(nl + 1); }
+    }
+    handle(buf);
+  } catch (err) {
+    if (signal?.aborted) throw abortError();
+    if (err instanceof ApiError) throw err;
+    throw new ApiError(`Загрузка оборвалась: ${err.cause?.code || err.message}. Повторите — Ollama продолжит с места остановки.`, 0);
+  }
+}
+
 export class OpenAIClient {
   constructor(cfg) {
     this.cfg = cfg;
