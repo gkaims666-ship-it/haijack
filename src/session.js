@@ -1,5 +1,5 @@
 // Сессия: общая логика терминального REPL и веб-интерфейса —
-// slash-команды, запуск задач в нужном режиме, прерывание.
+// slash-команды, запуск задач в нужном режиме, непрерывные задачи, самоулучшение, прерывание.
 
 import fs from 'node:fs';
 import path from 'node:path';
@@ -7,8 +7,13 @@ import { execCommand } from './tools/command.js';
 import { resolvePath } from './tools/fsutil.js';
 import { platformInfo } from './platform.js';
 import { VERSION } from './version.js';
+import { CONFIG_DIR } from './config.js';
+import { formatJournal } from './memory.js';
+import { prepareStaging, activate, rollback, resetToFactory, selfStatus } from './self/improve.js';
+import { selfCheck } from './self/check.js';
 
 export const MODES = ['auto', 'plan', 'solo'];
+export const TARGETS = ['project', 'self'];
 
 export const HELP = `
 Режимы (/mode <имя>):
@@ -16,14 +21,29 @@ export const HELP = `
   plan  — Architect составляет план, вы подтверждаете, затем конвейер
   solo  — один агент со всеми инструментами и памятью диалога (быстрее и дешевле)
 
-Команды:
+Задачи:
+  <текст>                 выполнить задачу. В режимах auto и plan работа продолжается заходами,
+                          пока ревью не останется без замечаний, а проверки не пройдут
+  /loop <текст>           непрерывная задача: повторять итерации до остановки (Ctrl+C или «Остановить»)
+  /self <текст>           улучшить само приложение: правки, самопроверка, установка новой версии
+  /target [project|self]  куда направлять обычные задачи: в проект или в само приложение
+
+Изменения:
+  /diff                   показать изменения последней задачи
+  /undo                   откатить изменения последней задачи
+  /self status|undo|reset версия приложения, откат доработки, возврат к заводской версии
+
+Память и журнал:
+  /memory                 показать долговременную память
+  /forget                 стереть долговременную память
+  /journal                последние задачи и их результаты
+  /clear                  очистить диалог (опыт перед этим сохраняется в память)
+
+Прочее:
   /mode [auto|plan|solo]  показать или сменить режим
   /yes                    вкл/выкл автоподтверждение записи и команд (опасные — всегда вручную)
   /model [имя]            показать или сменить модель для всех агентов
-  /diff                   показать изменения последней задачи
-  /undo                   откатить изменения последней задачи
   /cd <папка>             сменить папку проекта
-  /clear                  очистить память агентов
   /cost                   расход токенов за сессию
   /status                 среда, оболочка, настройки
   /help                   эта справка
@@ -32,19 +52,25 @@ export const HELP = `
 `;
 
 const isAnswerOnly = (plan) => /РЕЖИМ:\s*ОТВЕТ/i.test(plan) && !/РЕЖИМ:\s*ИЗМЕНЕНИЯ/i.test(plan);
+const MAX_LOOP_FAILURES = 3; // подряд неудачных итераций непрерывной задачи до остановки
 
 export class Session {
   /**
    * @param {object} o
    * @param {object} o.ui  рендерер: info/warn/error/print/shellOutput/confirm + методы агентного потока
    */
-  constructor({ cfg, orchestrator, usage, ui, mode }) {
+  constructor({ cfg, orchestrator, usage, ui, mode, memory }) {
     this.cfg = cfg;
     this.orchestrator = orchestrator;
     this.usage = usage;
     this.ui = ui;
+    this.memory = memory;
     this.mode = MODES.includes(mode) ? mode : 'auto';
-    this.controller = null; // AbortController выполняющейся задачи
+    this.target = 'project';     // куда идут обычные задачи: 'project' или 'self'
+    this.controller = null;      // AbortController выполняющейся задачи
+    this.looping = false;
+    this.restartRequested = false; // установлена новая версия приложения — нужен перезапуск
+    this.onClear = null;         // хук интерфейса: очистить показанный диалог
   }
 
   get busy() { return this.controller !== null; }
@@ -57,16 +83,146 @@ export class Session {
   }
 
   state() {
-    return { mode: this.mode, busy: this.busy, model: this.cfg.model, cwd: this.cfg.cwd, autoApprove: this.cfg.autoApprove, version: VERSION };
+    return {
+      mode: this.mode, target: this.target, busy: this.busy, looping: this.looping,
+      model: this.cfg.model, provider: this.cfg.provider, cwd: this.cfg.cwd,
+      autoApprove: this.cfg.autoApprove, version: VERSION,
+    };
   }
 
-  /** Обрабатывает строку ввода. Возвращает 'exit', если пользователь завершил сессию. */
+  /** Обрабатывает строку ввода. Возвращает 'exit' или 'restart', если сессию надо завершить. */
   async handle(input) {
     const text = input.trim();
     if (!text) return undefined;
-    if (text.startsWith('/')) return this.#command(text);
-    if (text.startsWith('!')) return this.#shell(text.slice(1).trim());
-    return this.#task(text);
+    let result;
+    if (text.startsWith('/')) result = await this.#command(text);
+    else if (text.startsWith('!')) result = await this.#shell(text.slice(1).trim());
+    else result = await this.#guard((signal) => this.#dispatch(text, signal));
+    if (this.restartRequested) return 'restart';
+    return result;
+  }
+
+  /** Общая обвязка задач: сигнал прерывания и единая обработка ошибок */
+  async #guard(fn) {
+    this.controller = new AbortController();
+    const { signal } = this.controller;
+    try {
+      await fn(signal);
+    } catch (err) {
+      if (err.name === 'AbortError' || signal.aborted) this.ui.warn('Задача прервана.');
+      else {
+        this.ui.error(err.message);
+        this.memory?.log({ task: '(ошибка выполнения)', cwd: this.cfg.cwd, error: err.message, done: false });
+      }
+    } finally {
+      this.controller = null;
+      this.looping = false;
+    }
+    return undefined;
+  }
+
+  #dispatch(text, signal) {
+    return this.target === 'self' ? this.#selfTask(text, signal) : this.#projectTask(text, signal);
+  }
+
+  async #projectTask(text, signal) {
+    const { ui, orchestrator } = this;
+    if (this.mode === 'solo') return { kind: 'solo', done: true, text: await orchestrator.solo(text, signal) };
+    let presetPlan;
+    if (this.mode === 'plan') {
+      presetPlan = await orchestrator.plan(text, signal);
+      if (isAnswerOnly(presetPlan)) return { kind: 'answer', done: true };
+      if (!(await ui.confirm('Выполнить план?'))) { ui.info('Отменено, изменения не вносились.'); return { kind: 'cancelled', done: true }; }
+    }
+    const res = await orchestrator.runUntilDone(text, signal, { presetPlan });
+    if (res.kind === 'changes' && res.done && res.cycles > 1) ui.done(`Задача выполнена за ${res.cycles} захода(ов).`);
+    return res;
+  }
+
+  /**
+   * Задача по улучшению самого приложения. Агенты работают с копией кода; новая версия
+   * устанавливается, только если ревью без замечаний и самопроверка пройдена.
+   * @returns результат и флаг installed
+   */
+  async #selfTask(text, signal) {
+    const { ui, orchestrator } = this;
+    const staging = prepareStaging();
+    ui.info(`Работаю с копией кода приложения: ${staging}`);
+    const res = await orchestrator.withCwd(staging, () => orchestrator.runUntilDone(text, signal, {
+      target: 'self',
+      finalCheck: async () => {
+        ui.info('Самопроверка новой версии…');
+        const check = await selfCheck(staging, { signal });
+        ui[check.ok ? 'done' : 'warn'](check.ok ? check.report : `Самопроверка не пройдена:\n${check.report}`);
+        return check;
+      },
+    }));
+    if (res.kind !== 'changes') return res;
+    if (!res.files.length) { ui.info('Код приложения не изменён.'); return res; }
+    if (!res.done) {
+      ui.warn(`Новая версия не установлена: задача не доведена до конца. Работающее приложение не затронуто, черновик остался в ${staging}.`);
+      return res;
+    }
+    // Самопроверка обязательна, даже если до неё не дошло из-за порядка шагов
+    const check = res.check ?? await selfCheck(staging, { signal });
+    if (!check.ok) { ui.warn(`Новая версия не установлена: самопроверка не пройдена.\n${check.report}`); return { ...res, done: false }; }
+    const n = activate();
+    res.installed = n;
+    this.restartRequested = true;
+    ui.done(`Установлена версия приложения v${n}. Перезапускаюсь, чтобы изменения вступили в силу. Откат: /self undo`);
+    return res;
+  }
+
+  /** Непрерывная задача: итерации до команды остановки, с журналом результатов */
+  async #loop(task, signal) {
+    const { ui } = this;
+    this.looping = true;
+    const logDir = path.join(CONFIG_DIR, 'logs');
+    const logFile = path.join(logDir, `loop-${new Date().toISOString().replace(/[:.]/g, '-')}.md`);
+    const log = (line) => {
+      try { fs.mkdirSync(logDir, { recursive: true }); fs.appendFileSync(logFile, `${line}\n`); } catch { /* журнал не должен ломать работу */ }
+    };
+    log(`# Непрерывная задача\n\n${task}\n\nЦель: ${this.target === 'self' ? 'само приложение' : this.cfg.cwd}\nНачало: ${new Date().toISOString()}\n`);
+    ui.info(`Непрерывная задача запущена. Она будет выполняться, пока вы её не остановите. Журнал: ${logFile}`);
+
+    const done = [];
+    let failures = 0;
+    let n = 0;
+    try {
+      while (!signal.aborted) {
+        n++;
+        ui.info(`Итерация ${n}`);
+        const prompt = [
+          task,
+          `# Непрерывная задача, итерация ${n}`,
+          done.length
+            ? `Уже сделано в прошлых итерациях:\n${done.slice(-15).map((d, i) => `${i + 1}. ${d}`).join('\n')}\n\nВыбери и выполни следующее по важности улучшение в рамках задачи. Не повторяй сделанное. Если улучшать больше нечего, проверь сделанное ранее и исправь найденные недочёты.`
+            : 'Задача выполняется итерациями. В этой итерации сделай одно законченное улучшение в рамках задачи и доведи его до рабочего состояния.',
+        ].join('\n\n');
+        let line;
+        try {
+          const res = await this.#dispatch(prompt, signal);
+          const what = res.files?.length ? res.files.join(', ') : 'файлы не менялись';
+          const summary = String(res.report || res.text || '').split('\n').find((l) => l.trim())?.slice(0, 200) || '';
+          line = `${res.done ? 'выполнено' : 'НЕ завершено'} — ${what}${summary ? ` — ${summary}` : ''}`;
+          failures = res.done ? 0 : failures + 1;
+        } catch (err) {
+          if (err.name === 'AbortError' || signal.aborted) { log(`${n}. прервано пользователем`); throw err; }
+          line = `ошибка: ${err.message}`;
+          ui.error(err.message);
+          failures++;
+        }
+        done.push(line);
+        log(`${n}. ${new Date().toISOString()} ${line}`);
+        if (failures >= MAX_LOOP_FAILURES) {
+          ui.warn(`Непрерывная задача остановлена: ${MAX_LOOP_FAILURES} итерации подряд не удались. Журнал: ${logFile}`);
+          break;
+        }
+      }
+    } finally {
+      log(`\nОкончание: ${new Date().toISOString()}, итераций: ${done.length}`);
+      if (done.length) ui.print(`Итоги непрерывной задачи (${done.length}):\n${done.map((d, i) => `${i + 1}. ${d}`).join('\n')}\n\nЖурнал: ${logFile}`);
+    }
   }
 
   async #command(text) {
@@ -83,6 +239,32 @@ export class Session {
         if (!arg) ui.info(`Режим: ${this.mode}. Доступно: ${MODES.join(', ')}`);
         else if (MODES.includes(arg)) { this.mode = arg; ui.info(`Режим: ${this.mode}`); } else ui.warn(`Неизвестный режим: ${arg}`);
         break;
+      case 'target':
+        if (!arg) ui.info(`Задачи направляются: ${this.target === 'self' ? 'в само приложение' : 'в проект'}. Доступно: project, self`);
+        else if (TARGETS.includes(arg)) { this.target = arg; ui.info(arg === 'self' ? 'Теперь задачи улучшают само приложение.' : 'Теперь задачи выполняются в проекте.'); } else ui.warn(`Неизвестная цель: ${arg}`);
+        break;
+      case 'loop':
+        if (!arg) { ui.warn('Укажите задачу: /loop <текст>'); break; }
+        if (this.mode === 'plan') { ui.warn('Непрерывные задачи не работают в режиме plan: он ждёт подтверждения каждого плана. Переключитесь на auto или solo.'); break; }
+        return this.#guard((signal) => this.#loop(arg, signal));
+      case 'self': {
+        const sub = arg.toLowerCase();
+        if (!arg || sub === 'status') { ui.info(selfStatus()); break; }
+        if (sub === 'undo') {
+          const to = rollback();
+          if (!to) { ui.info('Доработок нет — откатывать нечего.'); break; }
+          this.restartRequested = true;
+          ui.done(`После перезапуска будет работать ${to}. Перезапускаюсь.`);
+          break;
+        }
+        if (sub === 'reset') {
+          if (!(await ui.confirm('Удалить все доработки приложения и вернуть заводскую версию?'))) { ui.info('Отменено.'); break; }
+          if (resetToFactory()) { this.restartRequested = true; ui.done('Доработки удалены. Перезапускаюсь на заводской версии.'); } else ui.info('Доработок не было.');
+          break;
+        }
+        if (this.mode === 'solo') { ui.warn('Самоулучшение требует ревью и проверок: переключитесь на режим auto или plan.'); break; }
+        return this.#guard((signal) => this.#selfTask(arg, signal));
+      }
       case 'yes': case 'auto-approve':
         cfg.autoApprove = !cfg.autoApprove;
         ui.info(`Автоподтверждение: ${cfg.autoApprove ? 'ВКЛ (опасные команды всё равно спрашиваются)' : 'выкл'}`);
@@ -121,9 +303,26 @@ export class Session {
         ui.info(`Проект: ${cfg.cwd}`);
         break;
       }
+      case 'memory': {
+        const text = this.memory?.read();
+        if (text) ui.print(text); else ui.info(cfg.memory ? 'Память пока пуста: она пополняется после выполненных задач.' : 'Память отключена (LCC_MEMORY=0).');
+        break;
+      }
+      case 'forget':
+        if (!(await ui.confirm('Стереть долговременную память? Накопленный опыт будет потерян.'))) { ui.info('Отменено.'); break; }
+        this.memory?.clear();
+        for (const a of Object.values(this.orchestrator.agents)) a.refreshSystem();
+        ui.info('Память стёрта.');
+        break;
+      case 'journal':
+        ui.print(formatJournal(this.memory?.recent(10) ?? []));
+        break;
       case 'clear':
+        // Сначала опыт диалога переносится в память, и только потом диалог очищается
+        await this.#guard((signal) => this.orchestrator.rememberDialog(signal));
         this.orchestrator.resetAll();
-        ui.info('Память агентов очищена.');
+        this.onClear?.();
+        ui.info('Диалог очищен. Долговременная память сохранена (/memory — посмотреть, /forget — стереть).');
         break;
       case 'cost': case 'usage':
         ui.info(this.usage.report());
@@ -133,9 +332,11 @@ export class Session {
         ui.info([
           `Версия: ${VERSION}`,
           `ОС: ${pi.os} ${pi.arch}, Node ${pi.node}`, `Оболочка: ${pi.shell}`, `Проект: ${cfg.cwd}`,
-          `API: ${cfg.baseUrl}`, `Модель: ${cfg.model}`, `Режим: ${this.mode}`, `Автоподтверждение: ${cfg.autoApprove ? 'вкл' : 'выкл'}`,
-          `Рассуждения: ${cfg.thinking}${cfg.effort ? `, effort ${cfg.effort}` : ''}; кэш промта: ${cfg.promptCache ? 'вкл' : 'выкл'}`,
-          `max_tokens: ${cfg.maxTokens}, шагов на агента: ${cfg.maxTurns}, циклов исправлений: ${cfg.maxFixRounds}`,
+          cfg.provider === 'local' ? `Модели: локальный сервер ${cfg.local.baseUrl}` : `API: ${cfg.baseUrl}`,
+          `Модель: ${cfg.model || '(не выбрана)'}`, `Режим: ${this.mode}`, `Автоподтверждение: ${cfg.autoApprove ? 'вкл' : 'выкл'}`,
+          `Рассуждения: ${cfg.thinking}${cfg.effort ? `, effort ${cfg.effort}` : ''}; кэш промта: ${cfg.promptCache ? 'вкл' : 'выкл'}; память: ${cfg.memory ? 'вкл' : 'выкл'}`,
+          `max_tokens: ${cfg.maxTokens}, шагов на агента: ${cfg.maxTurns}, исправлений за заход: ${cfg.maxFixRounds}, заходов на задачу: ${cfg.maxCycles || 'без ограничения'}`,
+          selfStatus(),
         ].join('\n'));
         break;
       }
@@ -156,31 +357,6 @@ export class Session {
         onData: (s) => this.ui.shellOutput(s),
       });
       this.ui.info(`[код выхода ${res.code}${res.timedOut ? ', таймаут' : ''}]`);
-    } finally {
-      this.controller = null;
-    }
-    return undefined;
-  }
-
-  async #task(text) {
-    const { ui, orchestrator } = this;
-    this.controller = new AbortController();
-    const { signal } = this.controller;
-    try {
-      if (this.mode === 'solo') {
-        await orchestrator.solo(text, signal);
-      } else if (this.mode === 'plan') {
-        const plan = await orchestrator.plan(text, signal);
-        if (!isAnswerOnly(plan)) {
-          if (await ui.confirm('Выполнить план?')) await orchestrator.run(text, signal, { presetPlan: plan });
-          else ui.info('Отменено, изменения не вносились.');
-        }
-      } else {
-        await orchestrator.run(text, signal);
-      }
-    } catch (err) {
-      if (err.name === 'AbortError' || signal.aborted) ui.warn('Задача прервана.');
-      else ui.error(err.message);
     } finally {
       this.controller = null;
     }

@@ -15,7 +15,7 @@ export class Agent {
    * @param {object} o.ui
    * @param {object} o.usage   общий счётчик токенов
    */
-  constructor({ role, toolNames, client, cfg, ui, usage, changes }) {
+  constructor({ role, toolNames, client, cfg, ui, usage, changes, memory }) {
     this.role = role;
     this.meta = AGENT_META[role];
     this.tools = getTools(toolNames);
@@ -26,8 +26,19 @@ export class Agent {
     this.usage = usage;
     this.changes = changes; // общий на сессию учёт изменений (diff для ревью, откат)
     this.seen = new Map();  // файлы, содержимое которых этот агент видел: abs -> mtime
+    this.memory = memory;   // долговременная память (src/memory.js) или undefined
     this.messages = [];
-    this.system = buildSystemPrompt(role, cfg.cwd);
+    this.system = this.#buildSystem();
+  }
+
+  #buildSystem() {
+    const memory = this.cfg.memory && this.memory ? this.memory.read() : '';
+    return buildSystemPrompt(this.role, this.cfg.cwd, memory);
+  }
+
+  /** Обновить системный промт (после изменения памяти), не теряя историю диалога */
+  refreshSystem() {
+    this.system = this.#buildSystem();
   }
 
   get model() {
@@ -37,7 +48,7 @@ export class Agent {
   reset() {
     this.messages = [];
     this.seen.clear();
-    this.system = buildSystemPrompt(this.role, this.cfg.cwd);
+    this.system = this.#buildSystem();
   }
 
   #compact() {
