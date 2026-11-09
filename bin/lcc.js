@@ -8,11 +8,4 @@ if (major < 18 || (major === 18 && minor < 17)) {
   process.exit(1);
 }
 
-const { main } = await import('../src/index.js');
-main().then(
-  (code) => process.exit(code ?? 0),
-  (err) => {
-    console.error(err?.stack || String(err));
-    process.exit(1);
-  },
-);
+await import('../src/cli.js');

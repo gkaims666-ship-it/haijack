@@ -1,21 +1,10 @@
 // Отрисовка работы агентов в терминале + запрос подтверждений.
 
 import { c, sym, fit, columns, hr, Spinner } from './term.js';
+import { argSummary, resultSummary } from './summary.js';
 
 const out = (s = '') => process.stdout.write(s);
 const LIVE_OUTPUT_LINES = 60;
-
-function argSummary(block) {
-  const i = block.input || {};
-  switch (block.name) {
-    case 'read_file': return i.path + (i.offset ? `:${i.offset}` : '');
-    case 'write_file': case 'edit_file': case 'list_dir': return i.path ?? '.';
-    case 'glob': return i.pattern;
-    case 'grep': return `/${i.pattern}/` + (i.include ? ` ${i.include}` : '') + (i.path ? ` в ${i.path}` : '');
-    case 'run_command': return i.command;
-    default: return JSON.stringify(i);
-  }
-}
 
 export class Renderer {
   /** @param {{cfg:object, question:(q:string)=>Promise<string>}} o */
@@ -94,16 +83,9 @@ export class Renderer {
   }
 
   toolResult(block, res) {
-    const first = (res.content.split('\n').find((l) => l.trim()) || '').trim();
-    let summary;
-    if (res.isError) summary = c.red(fit(first, columns() - 6));
-    else if (block.name === 'read_file') summary = c.dim(`прочитано строк: ${res.content.split('\n').filter((l) => /^\s*\d+\t/.test(l)).length}`);
-    else if (block.name === 'run_command') summary = /код выхода 0\]/.test(first) ? c.green(first) : c.yellow(first);
-    else if (block.name === 'grep' || block.name === 'glob') {
-      const n = res.content.startsWith('Ничего') || res.content.startsWith('Совпадений нет') ? 0 : res.content.split('\n').length;
-      summary = c.dim(n ? fit(first, columns() - 6) : 'ничего не найдено');
-    } else summary = c.dim(fit(first, columns() - 6));
-    out(`  ${c.dim(sym.corner)} ${summary}\n`);
+    const { text, tone } = resultSummary(block, res);
+    const paint = { error: c.red, ok: c.green, warn: c.yellow, dim: c.dim }[tone];
+    out(`  ${c.dim(sym.corner)} ${paint(fit(text, columns() - 6))}\n`);
   }
 
   commandOutput(chunk) {
@@ -148,7 +130,17 @@ export class Renderer {
     }
   }
 
+  /** Вопрос «да/нет» вне потока инструментов (подтверждение плана, отката) */
+  async confirm(text) {
+    this.spinner.stop();
+    if (!process.stdin.isTTY) return this.cfg.autoApprove;
+    const ans = (await this.question(`\n${c.bold(text)} ${c.dim('[Y/n]')} `)).trim().toLowerCase();
+    return ans === '' || ['y', 'yes', 'д', 'да'].includes(ans);
+  }
+
   // ---------- служебные сообщения ----------
+  print(s) { this.spinner.stop(); out(`${s}\n`); }
+  shellOutput(s) { out(s); }
   retry({ attempt, wait, reason }) {
     this.spinner.stop();
     out(c.yellow(`  ${sym.warn} ${reason}, повтор #${attempt} через ${Math.round(wait / 1000)} с\n`));

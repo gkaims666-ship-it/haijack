@@ -1,6 +1,6 @@
 {
   "name": "local-claude-code",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Cross-platform (Windows / Android Termux / Linux / macOS) terminal AI coding assistant with a 4-agent pipeline. Zero dependencies.",
   "type": "module",
   "bin": {
@@ -9,7 +9,7 @@
   "main": "src/index.js",
   "scripts": {
     "start": "node bin/lcc.js",
-    "test": "node --test test/core.test.js test/pipeline.test.js"
+    "test": "node test/run.mjs"
   },
   "engines": {
     "node": ">=18.17"

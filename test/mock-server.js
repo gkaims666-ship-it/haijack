@@ -31,10 +31,14 @@ function sse(res, blocks, stopReason) {
 const text = (t) => ({ type: 'text', text: t });
 const tool = (id, name, input) => ({ type: 'tool_use', id, name, input });
 
-export function scenario(system, messages) {
+/** Текст блока или строки: с кэшированием промта system и content приходят массивами блоков */
+const textOf = (v) => (typeof v === 'string' ? v : Array.isArray(v) ? v.map((b) => b.text ?? b.content ?? '').join('') : '');
+
+export function scenario(rawSystem, messages) {
+  const system = textOf(rawSystem);
   const n = messages.length; // 1 = первый вызов, 3 = после первого tool_result, ...
   const lastUser = messages[n - 1];
-  const lastText = typeof lastUser.content === 'string' ? lastUser.content : '';
+  const lastText = textOf(lastUser.content);
 
   if (system.includes('Agent-Architect')) {
     if (lastText.includes('ВОПРОС')) return [[text('РЕЖИМ: ОТВЕТ\nЭто ответ на вопрос.')], 'end_turn'];
@@ -50,14 +54,14 @@ export function scenario(system, messages) {
   }
   if (system.includes('Agent-Reviewer')) {
     if (n === 1) return [[tool('r1', 'read_file', { path: 'hello.js' })], 'tool_use'];
-    const result = messages[n - 1].content[0].content;
+    const result = textOf(messages[n - 1].content);
     return result.includes("'hello'")
       ? [[text('Всё хорошо.\nВЕРДИКТ: OK')], 'end_turn']
       : [[text('Нужно приветствие hello.\nВЕРДИКТ: ИСПРАВИТЬ')], 'end_turn'];
   }
   if (system.includes('Agent-Executor')) {
     if (n === 1) return [[tool('e1', 'run_command', { command: 'node hello.js' })], 'tool_use'];
-    const result = messages[n - 1].content[0].content;
+    const result = textOf(messages[n - 1].content);
     return result.includes('hello') ? [[text('Работает.\nСТАТУС: PASS')], 'end_turn'] : [[text('СТАТУС: FAIL')], 'end_turn'];
   }
   return [[text('solo ok')], 'end_turn'];

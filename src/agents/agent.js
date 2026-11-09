@@ -15,7 +15,7 @@ export class Agent {
    * @param {object} o.ui
    * @param {object} o.usage   общий счётчик токенов
    */
-  constructor({ role, toolNames, client, cfg, ui, usage }) {
+  constructor({ role, toolNames, client, cfg, ui, usage, changes }) {
     this.role = role;
     this.meta = AGENT_META[role];
     this.tools = getTools(toolNames);
@@ -24,9 +24,10 @@ export class Agent {
     this.cfg = cfg;
     this.ui = ui;
     this.usage = usage;
+    this.changes = changes; // общий на сессию учёт изменений (diff для ревью, откат)
+    this.seen = new Map();  // файлы, содержимое которых этот агент видел: abs -> mtime
     this.messages = [];
     this.system = buildSystemPrompt(role, cfg.cwd);
-    this.onToolDone = null; // хук (block, result) — оркестратор отслеживает изменённые файлы
   }
 
   get model() {
@@ -35,6 +36,7 @@ export class Agent {
 
   reset() {
     this.messages = [];
+    this.seen.clear();
     this.system = buildSystemPrompt(this.role, this.cfg.cwd);
   }
 
@@ -72,6 +74,8 @@ export class Agent {
       cfg: this.cfg,
       signal,
       ui: this.ui,
+      seen: this.seen,
+      changes: this.changes,
       approve: (req) => this.ui.approve({ ...req, agent: this.meta.label }),
     };
 
@@ -94,6 +98,7 @@ export class Agent {
             onText: (d) => this.ui.agentText(this.meta, d),
             onToolUseStart: () => this.ui.stopSpinner(),
             onRetry: (i) => this.ui.retry(i),
+            onNotice: (t) => this.ui.warn(t),
           },
         );
       } finally {
@@ -102,7 +107,11 @@ export class Agent {
       this.usage.add(this.model, msg.usage);
       this.ui.agentTextEnd();
 
-      if (!msg.content.length) msg.content = [{ type: 'text', text: '(пустой ответ)' }];
+      // Пустые текстовые блоки API обратно не принимает
+      msg.content = msg.content.filter((b) => b.type !== 'text' || b.text);
+      if (!msg.content.some((b) => b.type === 'text' || b.type === 'tool_use')) {
+        msg.content.push({ type: 'text', text: '(пустой ответ)' });
+      }
       this.messages.push({ role: 'assistant', content: msg.content });
 
       const text = msg.content.filter((b) => b.type === 'text').map((b) => b.text).join('');
@@ -123,7 +132,6 @@ export class Agent {
         this.ui.toolCall(this.meta, block);
         const res = await executeTool(block, this.tools, ctx);
         this.ui.toolResult(block, res);
-        this.onToolDone?.(block, res);
         results.push({ type: 'tool_result', tool_use_id: block.id, content: res.content, is_error: res.isError || undefined });
       }
       // На каждый tool_use обязан быть tool_result, иначе API вернёт 400

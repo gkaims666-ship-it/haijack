@@ -3,13 +3,16 @@
 import { readFile, writeFile, editFile, listDir } from './files.js';
 import { globTool, grepTool } from './search.js';
 import { runCommand } from './command.js';
+import { fetchUrl } from './web.js';
 
-export const ALL_TOOLS = [readFile, listDir, globTool, grepTool, writeFile, editFile, runCommand];
+export const ALL_TOOLS = [readFile, listDir, globTool, grepTool, writeFile, editFile, runCommand, fetchUrl];
 const byName = new Map(ALL_TOOLS.map((t) => [t.name, t]));
 
 export const TOOLSETS = {
-  readonly: ['read_file', 'list_dir', 'glob', 'grep'],
-  coder: ['read_file', 'list_dir', 'glob', 'grep', 'write_file', 'edit_file', 'run_command'],
+  // fetch_url есть у всех: он ничего не меняет на диске, но всегда требует подтверждения
+  architect: ['read_file', 'list_dir', 'glob', 'grep', 'fetch_url'],
+  reviewer: ['read_file', 'list_dir', 'glob', 'grep', 'fetch_url'],
+  coder: ['read_file', 'list_dir', 'glob', 'grep', 'write_file', 'edit_file', 'run_command', 'fetch_url'],
   executor: ['read_file', 'list_dir', 'glob', 'grep', 'run_command'],
   all: ALL_TOOLS.map((t) => t.name),
 };

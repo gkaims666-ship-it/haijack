@@ -48,9 +48,23 @@ export async function* parseSSE(stream) {
   }
 }
 
+/** Копия истории с меткой кэша на последнем блоке последнего сообщения (сама история не меняется) */
+export function withCacheMarker(messages) {
+  if (!messages.length) return messages;
+  const last = messages[messages.length - 1];
+  const blocks = typeof last.content === 'string' ? [{ type: 'text', text: last.content }] : [...last.content];
+  const tail = blocks[blocks.length - 1];
+  if (!tail || tail.type === 'thinking' || tail.type === 'redacted_thinking' || (tail.type === 'text' && !tail.text)) return messages;
+  blocks[blocks.length - 1] = { ...tail, cache_control: { type: 'ephemeral' } };
+  return [...messages.slice(0, -1), { ...last, content: blocks }];
+}
+
 export class AnthropicClient {
   constructor(cfg) {
     this.cfg = cfg;
+    this.off = { thinking: false, effort: false, cache: false }; // что отключено после отказа API
+    this.maxTokensCap = Infinity;
+    this.lastMaxTokens = 0;
   }
 
   headers() {
@@ -65,24 +79,65 @@ export class AnthropicClient {
   }
 
   /**
+   * Собирает тело запроса. Возможности, которые шлюз или модель отвергли (this.off), не отправляются.
+   */
+  buildBody({ model, system, messages, tools, maxTokens }) {
+    const cache = this.cfg.promptCache && !this.off.cache;
+    const body = { model, max_tokens: Math.min(maxTokens, this.maxTokensCap), stream: true };
+    this.lastMaxTokens = body.max_tokens;
+
+    // Кэширование промта: системный промт и инструменты не меняются между шагами агента,
+    // а история только растёт — метка на последнем сообщении делает каждый следующий шаг дешевле и быстрее.
+    body.system = cache ? [{ type: 'text', text: system, cache_control: { type: 'ephemeral' } }] : system;
+    body.messages = cache ? withCacheMarker(messages) : messages;
+    if (tools?.length) body.tools = tools;
+
+    const thinking = this.off.thinking ? 'off' : this.cfg.thinking;
+    if (thinking === 'adaptive') body.thinking = { type: 'adaptive' };
+    else if (typeof thinking === 'number') {
+      body.thinking = { type: 'enabled', budget_tokens: Math.min(thinking, body.max_tokens - 1024) };
+    }
+    if (this.cfg.effort && !this.off.effort) body.output_config = { effort: this.cfg.effort };
+    return body;
+  }
+
+  /**
+   * Если API отверг необязательную возможность (400), отключает её на сессию и сообщает, что стоит повторить.
+   * Так программа работает и с новыми моделями, и со старыми, и со шлюзами, не знающими новых полей.
+   */
+  #degrade(message, handlers) {
+    const m = message.toLowerCase();
+    const turnOff = (key, label) => {
+      if (this.off[key]) return false;
+      this.off[key] = true;
+      handlers.onNotice?.(`API не принял «${label}» — отключено до конца сессии.`);
+      return true;
+    };
+    if (/max_tokens/.test(m) && this.lastMaxTokens > 2048) {
+      // Обычно API называет допустимый предел («16000 > 8192»); если нет — уменьшаем вдвое
+      const allowed = Number((m.match(/(?:>|<=|maximum of|at most|limit of)\s*(\d{3,7})/) || [])[1]);
+      this.maxTokensCap = allowed >= 1024 && allowed < this.lastMaxTokens ? allowed : Math.max(2048, Math.floor(this.lastMaxTokens / 2));
+      handlers.onNotice?.(`Модель не поддерживает такой max_tokens — снижен до ${this.maxTokensCap}.`);
+      return true;
+    }
+    if (/thinking|adaptive|budget_tokens/.test(m)) return turnOff('thinking', 'thinking');
+    if (/output_config|effort/.test(m)) return turnOff('effort', 'effort');
+    if (/cache_control/.test(m)) return turnOff('cache', 'кэширование промта');
+    return false;
+  }
+
+  /**
    * Один потоковый вызов. Возвращает собранное сообщение:
    * { content: [...блоки], stop_reason, usage }
-   * handlers: onText(delta), onThinking(delta), onToolUseStart({id,name}), onRetry(info)
+   * handlers: onText(delta), onThinking(delta), onToolUseStart({id,name}), onRetry(info), onNotice(text)
    */
-  async stream({ model, system, messages, tools, maxTokens, signal }, handlers = {}) {
-    const body = JSON.stringify({
-      model,
-      max_tokens: maxTokens,
-      system,
-      messages,
-      tools: tools?.length ? tools : undefined,
-      stream: true,
-    });
-
+  async stream(req, handlers = {}) {
+    const { signal } = req;
     const url = `${this.cfg.baseUrl}/v1/messages`;
     let attempt = 0;
     for (;;) {
       if (signal?.aborted) throw abortError();
+      const body = JSON.stringify(this.buildBody(req));
       let res;
       try {
         res = await fetch(url, { method: 'POST', headers: this.headers(), body, signal });
@@ -100,6 +155,9 @@ export class AnthropicClient {
 
       if (!res.ok) {
         const text = await res.text().catch(() => '');
+        let msg = text;
+        try { msg = JSON.parse(text).error?.message || text; } catch { /* not json */ }
+        if (res.status === 400 && this.#degrade(msg, handlers)) continue;
         if (RETRY_STATUS.has(res.status) && attempt < 5) {
           const ra = Number(res.headers.get('retry-after'));
           const wait = Number.isFinite(ra) && ra > 0 ? ra * 1000 : Math.min(30000, 1000 * 2 ** attempt);
@@ -108,8 +166,6 @@ export class AnthropicClient {
           attempt++;
           continue;
         }
-        let msg = text;
-        try { msg = JSON.parse(text).error?.message || text; } catch { /* not json */ }
         throw new ApiError(`API ${res.status}: ${msg}`, res.status, text);
       }
 

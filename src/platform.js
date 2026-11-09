@@ -9,14 +9,15 @@ import { spawnSync } from 'node:child_process';
 const isWindows = process.platform === 'win32';
 
 function detectTermux() {
-  if (process.platform === 'android') return true;
   const prefix = process.env.PREFIX || '';
   if (prefix.includes('com.termux')) return true;
   if (process.env.TERMUX_VERSION) return true;
-  return fs.existsSync('/data/data/com.termux/files/usr/bin');
+  return false;
 }
 
 const isTermux = !isWindows && detectTermux();
+// Android без Termux — это наше приложение (apk) со встроенным Node: есть только системная оболочка
+const isAndroidApp = !isTermux && process.platform === 'android';
 
 function which(cmd) {
   const probe = isWindows
@@ -60,6 +61,7 @@ export function getShell() {
     const termuxBash = process.env.PREFIX ? path.join(process.env.PREFIX, 'bin', 'bash') : null;
     if (termuxBash && fs.existsSync(termuxBash)) file = termuxBash;
   }
+  if (!file && isAndroidApp) file = '/system/bin/sh';
   if (!file) file = which('bash') || (fs.existsSync('/bin/bash') ? '/bin/bash' : null);
   if (!file) file = process.env.PREFIX ? path.join(process.env.PREFIX, 'bin', 'sh') : '/bin/sh';
   const name = path.basename(file);
@@ -106,12 +108,14 @@ export function platformInfo() {
   let osName = process.platform;
   if (isWindows) osName = `Windows ${os.release()}`;
   else if (isTermux) osName = 'Android (Termux)';
+  else if (isAndroidApp) osName = 'Android (приложение)';
   else if (process.platform === 'darwin') osName = `macOS ${os.release()}`;
   else if (process.platform === 'linux') osName = `Linux ${os.release()}`;
   return {
     os: osName,
     isWindows,
     isTermux,
+    isAndroidApp,
     arch: process.arch,
     node: process.version,
     shell: shell.name,
@@ -135,6 +139,9 @@ export function platformPromptBlock(cwd) {
   if (p.isTermux) {
     hints.push('Это Termux на Android: нет sudo и root, пакеты ставятся через `pkg install <name>`, префикс $PREFIX. /tmp может отсутствовать — используй $TMPDIR. Ресурсы ограничены, избегай тяжёлых сборок.');
   }
+  if (p.isAndroidApp) {
+    hints.push('Это Android-приложение без Termux. Доступна только системная оболочка (toybox: ls, cat, cp, mv, grep, sed, find и т.п.). Нет node, python, git, компиляторов и менеджера пакетов — не пытайся их запускать или устанавливать. Проверяй код чтением и рассуждением; если для проверки нужен интерпретатор, прямо скажи, что запустить негде.');
+  }
   return [
     `ОС: ${p.os} (${p.arch}), Node ${p.node}`,
     `Оболочка: ${p.shell}`,
@@ -144,4 +151,4 @@ export function platformPromptBlock(cwd) {
   ].join('\n');
 }
 
-export { isWindows, isTermux };
+export { isWindows, isTermux, isAndroidApp };

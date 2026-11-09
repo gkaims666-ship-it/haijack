@@ -1,25 +1,25 @@
-// Точка входа: аргументы CLI, конфигурация, запуск REPL или однократной задачи.
+// Точка входа: аргументы CLI, конфигурация, запуск REPL, однократной задачи или веб-режима.
 
 import fs from 'node:fs';
 import path from 'node:path';
 import readline from 'node:readline';
-import { fileURLToPath } from 'node:url';
 import { loadEnv, buildConfig, hasCredentials, interactiveSetup } from './config.js';
 import { AnthropicClient } from './api/anthropic.js';
 import { Orchestrator } from './agents/orchestrator.js';
 import { Renderer } from './ui/renderer.js';
 import { startRepl } from './ui/repl.js';
+import { Session, MODES } from './session.js';
 import { Usage } from './usage.js';
 import { c } from './ui/term.js';
-
-const pkg = JSON.parse(fs.readFileSync(path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'package.json'), 'utf8'));
+import { VERSION } from './version.js';
 
 const USAGE = `
-Local Claude Code v${pkg.version} — терминальный ИИ-ассистент с 4 агентами
+Local Claude Code v${VERSION} — терминальный ИИ-ассистент с 4 агентами
 
 Использование:
   lcc                       интерактивный режим в текущей папке
   lcc -p "задача"           выполнить одну задачу и выйти
+  lcc --web                 интерфейс в браузере (http://127.0.0.1:<порт>)
   lcc --cwd <папка>         рабочая папка проекта
 
 Опции:
@@ -28,12 +28,14 @@ Local Claude Code v${pkg.version} — терминальный ИИ-ассист
       --model <имя>            модель для всех агентов
   -p, --print <задача>         однократный запуск
       --cwd <папка>            корень проекта
+      --web                    веб-интерфейс вместо терминального
+      --port <номер>           порт веб-интерфейса (по умолчанию свободный)
   -v, --version
   -h, --help
 `;
 
 export function parseArgs(argv) {
-  const o = { mode: undefined, yes: false, model: undefined, print: undefined, cwd: undefined, help: false, version: false, rest: [] };
+  const o = { mode: undefined, yes: false, model: undefined, print: undefined, cwd: undefined, web: false, port: undefined, help: false, version: false, rest: [] };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     const val = () => {
@@ -48,12 +50,22 @@ export function parseArgs(argv) {
       case '--model': o.model = val(); break;
       case '-p': case '--print': o.print = val(); break;
       case '--cwd': o.cwd = val(); break;
+      case '--web': o.web = true; break;
+      case '--port': o.port = val(); break;
       default:
         if (a.startsWith('--mode=')) o.mode = a.slice(7);
         else if (a.startsWith('--model=')) o.model = a.slice(8);
         else if (a.startsWith('--cwd=')) o.cwd = a.slice(6);
+        else if (a.startsWith('--port=')) o.port = a.slice(7);
+        else if (a.startsWith('-') && a.length > 1) throw new Error(`Неизвестная опция ${a}. Справка: lcc --help`);
         else o.rest.push(a);
     }
+  }
+  if (o.mode !== undefined && !MODES.includes(o.mode)) throw new Error(`Неизвестный режим "${o.mode}". Доступно: ${MODES.join(', ')}`);
+  if (o.port !== undefined) {
+    const n = Number(o.port);
+    if (!Number.isInteger(n) || n < 0 || n > 65535) throw new Error(`Некорректный порт: ${o.port}`);
+    o.port = n;
   }
   if (!o.print && o.rest.length) o.print = o.rest.join(' ');
   return o;
@@ -63,7 +75,7 @@ export async function main(argv = process.argv.slice(2)) {
   let args;
   try { args = parseArgs(argv); } catch (e) { console.error(e.message); return 2; }
   if (args.help) { console.log(USAGE); return 0; }
-  if (args.version) { console.log(pkg.version); return 0; }
+  if (args.version) { console.log(VERSION); return 0; }
 
   const cwd = path.resolve(args.cwd || process.cwd());
   if (!fs.existsSync(cwd) || !fs.statSync(cwd).isDirectory()) {
@@ -72,19 +84,46 @@ export async function main(argv = process.argv.slice(2)) {
   }
   loadEnv(cwd);
   let cfg = buildConfig(cwd);
+  const applyArgs = () => {
+    if (args.yes) cfg.autoApprove = true;
+    if (args.model) {
+      cfg.model = args.model;
+      for (const k of Object.keys(cfg.models)) cfg.models[k] = args.model;
+    }
+  };
+
+  if (args.web) {
+    // Веб-режим сам спросит ключ в браузере, если его нет
+    applyArgs();
+    const { startWeb, logError } = await import('./web/server.js');
+    process.on('uncaughtException', logError);
+    process.on('unhandledRejection', logError);
+    const web = await startWeb({
+      cfg,
+      mode: args.mode,
+      port: args.port ?? (Number(process.env.LCC_WEB_PORT) || 0),
+      host: process.env.LCC_WEB_HOST || '127.0.0.1',
+      token: process.env.LCC_WEB_TOKEN || undefined,
+    });
+    console.log(`Local Claude Code v${VERSION} — веб-интерфейс запущен.`);
+    console.log(`Откройте в браузере: ${web.url}`);
+    console.log('Ссылка содержит ключ доступа — не передавайте её другим. Ctrl+C — остановить.');
+    process.on('SIGINT', () => web.close());
+    process.on('SIGTERM', () => web.close());
+    await web.closed;
+    return 0;
+  }
+
   if (!hasCredentials(cfg)) {
     try { cfg = await interactiveSetup(cfg); } catch (e) { console.error(c.red(e.message)); return 1; }
   }
-  if (args.yes) cfg.autoApprove = true;
-  if (args.model) {
-    cfg.model = args.model;
-    for (const k of Object.keys(cfg.models)) cfg.models[k] = args.model;
-  }
+  applyArgs();
 
   const usage = new Usage();
   const client = new AnthropicClient(cfg);
   const renderer = new Renderer({ cfg, question: async () => 'n' });
   const orchestrator = new Orchestrator({ client, cfg, ui: renderer, usage });
+  const session = new Session({ cfg, orchestrator, usage, ui: renderer, mode: args.mode });
 
   if (args.print) {
     // Однократный режим: подтверждения через временный readline (если есть TTY)
@@ -94,20 +133,19 @@ export async function main(argv = process.argv.slice(2)) {
         rl.question(q, (a) => { rl.close(); res(a); });
       });
     }
-    const ac = new AbortController();
-    process.on('SIGINT', () => { if (ac.signal.aborted) process.exit(130); ac.abort(); });
-    try {
-      const mode = args.mode || 'auto';
-      if (mode === 'solo') await orchestrator.solo(args.print, ac.signal);
-      else if (mode === 'plan') await orchestrator.plan(args.print, ac.signal);
-      else await orchestrator.run(args.print, ac.signal);
-      return 0;
-    } catch (e) {
-      renderer.error(e.name === 'AbortError' ? 'Прервано' : e.message);
-      return 1;
-    }
+    let interrupted = false;
+    process.on('SIGINT', () => {
+      if (interrupted) process.exit(130);
+      interrupted = true;
+      session.abort();
+    });
+    let failed = false;
+    const origError = renderer.error.bind(renderer);
+    renderer.error = (s) => { failed = true; origError(s); };
+    await session.handle(args.print);
+    return failed || interrupted ? 1 : 0;
   }
 
-  await startRepl({ cfg, orchestrator, renderer, usage, version: pkg.version, initialMode: args.mode });
+  await startRepl({ cfg, session, renderer, usage });
   return 0;
 }

@@ -1,9 +1,13 @@
 // Мультиагентный оркестратор:
-//   Architect (план) -> Coder (код) -> Reviewer (аудит) <-> Coder -> Executor (тесты) <-> Coder -> итог
+//   Architect (план) -> Coder (код) -> [ Reviewer (аудит по diff) -> Executor (проверка) ] -> итог
+// Любое замечание Reviewer или падение у Executor возвращает задачу к Coder, после чего
+// изменённый код снова проходит ревью: непроверенные правки в итог не попадают.
 
 import { Agent } from './agent.js';
 import { TOOLSETS } from '../tools/index.js';
-import { displayPath, resolvePath } from '../tools/fsutil.js';
+import { ChangeSet } from '../tools/changes.js';
+
+const REVIEW_DIFF_LIMIT = 80_000; // символов diff в сообщении Reviewer
 
 export function parseVerdict(text, key, values) {
   const re = new RegExp(`${key}\\s*:\\s*\\**\\s*(${values.join('|')})`, 'gi');
@@ -20,31 +24,34 @@ export class Orchestrator {
     this.ui = ui;
     this.usage = usage;
     this.history = []; // краткая память о прошлых задачах сессии
-    const mk = (role, tools) => new Agent({ role, toolNames: tools, client, cfg, ui, usage });
+    this.changes = new ChangeSet(cfg.cwd);
+    const mk = (role, tools) => new Agent({ role, toolNames: tools, client, cfg, ui, usage, changes: this.changes });
     this.agents = {
-      architect: mk('architect', TOOLSETS.readonly),
+      architect: mk('architect', TOOLSETS.architect),
       coder: mk('coder', TOOLSETS.coder),
-      reviewer: mk('reviewer', TOOLSETS.readonly),
+      reviewer: mk('reviewer', TOOLSETS.reviewer),
       executor: mk('executor', TOOLSETS.executor),
       solo: mk('solo', TOOLSETS.all),
     };
-    this.changed = new Set();
-    const track = (block, res) => {
-      if (!res.isError && (block.name === 'write_file' || block.name === 'edit_file') && block.input?.path) {
-        this.changed.add(displayPath(cfg.cwd, resolvePath(cfg.cwd, block.input.path)));
-      }
-    };
-    for (const a of Object.values(this.agents)) a.onToolDone = track;
   }
 
   resetAll() {
     for (const a of Object.values(this.agents)) a.reset();
     this.history = [];
-    this.changed.clear();
+    this.changes.clear();
+  }
+
+  /** Сменить рабочую папку: агенты пересобирают системный промт под новый проект */
+  setCwd(cwd) {
+    this.cfg.cwd = cwd;
+    this.changes = new ChangeSet(cwd);
+    for (const a of Object.values(this.agents)) { a.changes = this.changes; a.reset(); }
+    this.history = [];
   }
 
   /** Соло-режим: один агент со всеми инструментами и общей историей диалога */
   async solo(task, signal) {
+    this.changes.clear(); // /undo и /diff относятся к последней задаче
     return this.agents.solo.send(task, { signal });
   }
 
@@ -65,12 +72,12 @@ export class Orchestrator {
    * Полный конвейер.
    * @param {string} task
    * @param {AbortSignal} signal
-   * @param {{confirmPlan?: (plan:string)=>Promise<boolean>, presetPlan?: string}} opts
+   * @param {{presetPlan?: string}} opts
    */
   async run(task, signal, opts = {}) {
     const { architect, coder, reviewer, executor } = this.agents;
     for (const a of [architect, coder, reviewer, executor]) a.reset();
-    this.changed.clear();
+    this.changes.clear();
 
     // 1. Architect
     let plan = opts.presetPlan;
@@ -83,10 +90,6 @@ export class Orchestrator {
       this.ui.done('Ответ готов (изменения кода не требовались).');
       return { kind: 'answer', text: plan };
     }
-    if (opts.confirmPlan && !(await opts.confirmPlan(plan))) {
-      this.ui.info('План отклонён, изменения не вносились.');
-      return { kind: 'cancelled', text: plan };
-    }
 
     // 2. Coder
     this.ui.stage('Coder', 'реализация');
@@ -95,50 +98,67 @@ export class Orchestrator {
       { signal },
     );
 
-    // 3. Reviewer <-> Coder
+    // 3. Цикл качества: ревью -> проверка; любая правка Coder возвращает на ревью
     let verdict = null;
-    for (let round = 0; round <= this.cfg.maxFixRounds; round++) {
-      if (!this.changed.size) {
-        this.ui.info('Coder не изменил ни одного файла — ревью пропущено.');
-        break;
-      }
-      this.ui.stage('Reviewer', round ? `повторный аудит (${round})` : 'аудит изменений');
-      reviewer.reset();
-      const review = await reviewer.send(
-        `Задача: ${task}\n\n# План\n${plan}\n\n# Отчёт Coder\n${coderReport}\n\n# Изменённые файлы\n${[...this.changed].join('\n')}\n\nПроведи аудит.`,
-        { signal },
-      );
-      verdict = parseVerdict(review, 'ВЕРДИКТ', ['OK', 'ИСПРАВИТЬ']) || 'OK';
-      if (verdict === 'OK') break;
-      if (round === this.cfg.maxFixRounds) {
-        this.ui.warn('Лимит циклов исправлений исчерпан, остались замечания Reviewer.');
-        break;
-      }
-      this.ui.stage('Coder', 'исправление замечаний Reviewer');
-      coderReport = await coder.send(`Замечания Reviewer:\n${review}\n\nИсправь реальные проблемы.`, { signal });
-    }
-
-    // 4. Executor <-> Coder
     let status = 'SKIP';
-    for (let round = 0; round <= this.cfg.maxFixRounds; round++) {
-      this.ui.stage('Executor', round ? `повторная проверка (${round})` : 'сборка и тесты');
+    let reviewedRevision = -1; // ревизия кода, прошедшая ревью
+    let reviews = 0;
+    let fixes = 0;
+    const canFix = () => fixes < this.cfg.maxFixRounds;
+
+    for (;;) {
+      const files = this.changes.files();
+
+      if (files.length && this.changes.revision !== reviewedRevision) {
+        this.ui.stage('Reviewer', reviews ? `повторный аудит (${reviews})` : 'аудит изменений');
+        reviews++;
+        reviewer.reset();
+        const review = await reviewer.send(
+          [
+            `Задача пользователя:\n${task}`,
+            `# План Архитектора\n${plan}`,
+            `# Отчёт Coder (заявление, а не факт)\n${coderReport}`,
+            `# Изменённые файлы\n${files.join('\n')}`,
+            `# Diff всех изменений\n${this.changes.diff({ maxChars: REVIEW_DIFF_LIMIT })}`,
+            'Проведи ревью.',
+          ].join('\n\n'),
+          { signal },
+        );
+        verdict = parseVerdict(review, 'ВЕРДИКТ', ['OK', 'ИСПРАВИТЬ']) || 'OK';
+        reviewedRevision = this.changes.revision;
+        if (verdict === 'ИСПРАВИТЬ') {
+          if (!canFix()) { this.ui.warn('Лимит циклов исправлений исчерпан, остались замечания Reviewer.'); break; }
+          fixes++;
+          this.ui.stage('Coder', 'исправление замечаний Reviewer');
+          coderReport = await coder.send(`Замечания Reviewer:\n${review}\n\nИсправь [блокер] и [важно]. Если с замечанием не согласен — обоснуй по коду.`, { signal });
+          continue;
+        }
+      } else if (!files.length && reviews === 0) {
+        this.ui.info('Coder не изменил ни одного файла — ревью пропущено.');
+      }
+
+      this.ui.stage('Executor', status === 'FAIL' ? 'повторная проверка' : 'сборка и тесты');
       executor.reset();
       const exec = await executor.send(
-        `Задача: ${task}\n\n# План (см. раздел «Проверка»)\n${plan}\n\n# Изменённые файлы\n${[...this.changed].join('\n') || '(нет)'}\n\nПроверь результат.`,
+        `Задача пользователя:\n${task}\n\n# План (см. раздел «Проверка»)\n${plan}\n\n# Изменённые файлы\n${files.join('\n') || '(нет)'}\n\nПроверь результат.`,
         { signal },
       );
       status = parseVerdict(exec, 'СТАТУС', ['PASS', 'FAIL', 'SKIP']) || 'SKIP';
       if (status !== 'FAIL') break;
-      if (round === this.cfg.maxFixRounds) {
-        this.ui.warn('Лимит циклов исправлений исчерпан, проверки не проходят.');
+      if (!canFix()) { this.ui.warn('Лимит циклов исправлений исчерпан, проверки не проходят.'); break; }
+      fixes++;
+      this.ui.stage('Coder', 'исправление по логам Executor');
+      const before = this.changes.revision;
+      coderReport = await coder.send(`Проверка упала. Отчёт Executor:\n${exec}\n\nНайди первопричину и исправь её.`, { signal });
+      if (this.changes.revision === before) {
+        // Coder ничего не изменил — повторять проверку бессмысленно
+        this.ui.warn('Coder не внёс изменений после падения проверки.');
         break;
       }
-      this.ui.stage('Coder', 'исправление по логам Executor');
-      coderReport = await coder.send(`Проверка упала. Отчёт Executor:\n${exec}\n\nНайди и исправь причину.`, { signal });
     }
 
-    const files = [...this.changed];
-    this.history.push(`Задача: ${task.slice(0, 200)} — файлы: ${files.join(', ') || 'нет'}; ревью: ${verdict ?? '-'}; тесты: ${status}`);
+    const files = this.changes.files();
+    this.history.push(`Задача: ${task.slice(0, 200)} — файлы: ${files.join(', ') || 'нет'}; ревью: ${verdict ?? '-'}; проверки: ${status}`);
     this.ui.summary({ files, verdict, status });
     return { kind: 'changes', files, verdict, status, report: coderReport };
   }

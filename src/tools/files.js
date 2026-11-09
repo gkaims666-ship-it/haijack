@@ -3,6 +3,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { resolvePath, isInside, displayPath, isBinaryBuffer, walk, truncate } from './fsutil.js';
+import { checkFile } from './checks.js';
 
 const MAX_READ_BYTES = 512 * 1024;
 const DEFAULT_LIMIT = 2000;
@@ -11,6 +12,32 @@ function guardWrite(ctx, abs) {
   if (!ctx.cfg.allowOutsideCwd && !isInside(ctx.cwd, abs)) {
     throw new Error(`Запись вне директории проекта запрещена: ${abs}. (LCC_ALLOW_OUTSIDE=1 чтобы разрешить)`);
   }
+}
+
+const mtimeOf = (abs) => {
+  try { return fs.statSync(abs).mtimeMs; } catch { return null; }
+};
+
+/**
+ * Правило «сначала прочитай»: существующий файл нельзя менять, пока агент не видел его
+ * актуальное содержимое. Это главный источник ошибок у моделей — правка по памяти или догадке.
+ * ctx.seen отсутствует в юнит-тестах и при прямом вызове инструментов — тогда проверки нет.
+ */
+function requireFresh(ctx, abs, p) {
+  if (!ctx.seen || !fs.existsSync(abs)) return;
+  if (!ctx.seen.has(abs)) {
+    throw new Error(`Сначала прочитай ${p} через read_file: нельзя менять файл, содержимое которого ты не видел.`);
+  }
+  if (ctx.seen.get(abs) !== mtimeOf(abs)) {
+    throw new Error(`${p} изменился после твоего последнего чтения. Перечитай его через read_file и повтори правку.`);
+  }
+}
+
+/** После записи: снимок уже сделан, обновляем «виденное» состояние и запускаем синтаксическую проверку */
+function afterWrite(ctx, abs) {
+  ctx.seen?.set(abs, mtimeOf(abs));
+  const problem = checkFile(abs);
+  return problem ? `\n\nВНИМАНИЕ, синтаксическая проверка не прошла — исправь сразу:\n${problem}` : '';
 }
 
 function detectEol(text) {
@@ -60,6 +87,7 @@ export const readFile = {
     const buf = Buffer.alloc(Math.min(st.size, MAX_READ_BYTES));
     fs.readSync(fd, buf, 0, buf.length, 0);
     fs.closeSync(fd);
+    ctx.seen?.set(abs, st.mtimeMs);
     if (isBinaryBuffer(buf)) return `[бинарный файл ${displayPath(ctx.cwd, abs)}, ${st.size} байт — содержимое не показано]`;
     const text = buf.toString('utf8').replace(/^﻿/, '');
     const lines = text.split(/\r?\n/);
@@ -92,27 +120,31 @@ export const writeFile = {
   describe({ path: p, content = '' }, ctx) {
     const abs = resolvePath(ctx.cwd, p);
     const exists = fs.existsSync(abs);
-    const lines = content.split('\n').length;
+    const body = content.split(/\r?\n/);
+    if (body[body.length - 1] === '') body.pop(); // завершающий перевод строки — не отдельная строка
+    const lines = body.length;
     let detail;
     if (exists) {
       try { detail = miniDiff(fs.readFileSync(abs, 'utf8'), content); } catch { detail = ''; }
     } else {
-      detail = content.split('\n').slice(0, 15).map((l) => `+ ${l}`).join('\n') + (lines > 15 ? `\n+ ... (${lines} строк)` : '');
+      detail = body.slice(0, 15).map((l) => `+ ${l}`).join('\n') + (lines > 15 ? `\n… всего строк: ${lines}` : '');
     }
-    return { title: `${exists ? 'Перезаписать' : 'Создать'} ${displayPath(ctx.cwd, abs)} (${lines} строк)`, detail };
+    return { title: `${exists ? 'Перезаписать' : 'Создать'} ${displayPath(ctx.cwd, abs)} (строк: ${lines})`, detail };
   },
   async run({ path: p, content }, ctx) {
     if (typeof content !== 'string') throw new Error('content должен быть строкой');
     const abs = resolvePath(ctx.cwd, p);
     guardWrite(ctx, abs);
+    requireFresh(ctx, abs, p);
     let data = content;
     if (fs.existsSync(abs)) {
       const old = fs.readFileSync(abs, 'utf8');
       if (detectEol(old) === '\r\n' && !content.includes('\r\n')) data = content.replace(/\n/g, '\r\n');
     }
+    ctx.changes?.snapshot(abs);
     fs.mkdirSync(path.dirname(abs), { recursive: true });
     fs.writeFileSync(abs, data, 'utf8');
-    return `Записано: ${displayPath(ctx.cwd, abs)} (${Buffer.byteLength(data)} байт)`;
+    return `Записано: ${displayPath(ctx.cwd, abs)} (${Buffer.byteLength(data)} байт)${afterWrite(ctx, abs)}`;
   },
 };
 
@@ -177,10 +209,12 @@ export const editFile = {
     guardWrite(ctx, abs);
     if (old_string === new_string) throw new Error('old_string и new_string совпадают');
     if (!old_string) throw new Error('old_string пуст. Для нового файла используй write_file.');
+    requireFresh(ctx, abs, p);
     const original = fs.readFileSync(abs, 'utf8');
     const { result, count } = applyEdit(original, old_string, new_string, replace_all);
+    ctx.changes?.snapshot(abs);
     fs.writeFileSync(abs, result, 'utf8');
-    return `Изменено: ${displayPath(ctx.cwd, abs)} (замен: ${count})`;
+    return `Изменено: ${displayPath(ctx.cwd, abs)} (замен: ${count})${afterWrite(ctx, abs)}`;
   },
 };
 

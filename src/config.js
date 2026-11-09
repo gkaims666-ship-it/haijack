@@ -52,6 +52,14 @@ export function loadEnv(cwd) {
   return loaded;
 }
 
+export function parseThinking(v) {
+  const s = String(v ?? '').trim().toLowerCase();
+  if (!s || s === 'adaptive' || s === 'on' || s === '1' || s === 'true') return 'adaptive';
+  if (['off', '0', 'false', 'no', 'none'].includes(s)) return 'off';
+  const n = Number(s);
+  return Number.isFinite(n) && n >= 1024 ? Math.floor(n) : 'adaptive';
+}
+
 const num = (v, d) => (v !== undefined && v !== '' && !Number.isNaN(Number(v)) ? Number(v) : d);
 
 export function buildConfig(cwd) {
@@ -71,9 +79,13 @@ export function buildConfig(cwd) {
       executor: env.LCC_MODEL_EXECUTOR || model,
       solo: env.LCC_MODEL_SOLO || model,
     },
-    maxTokens: num(env.LCC_MAX_TOKENS, 8192),
-    maxTurns: num(env.LCC_MAX_TURNS, 40),          // шагов tool-loop на одного агента
-    maxFixRounds: num(env.LCC_MAX_FIX_ROUNDS, 2),  // циклов Reviewer/Executor -> Coder
+    maxTokens: num(env.LCC_MAX_TOKENS, 16000),
+    maxTurns: num(env.LCC_MAX_TURNS, 60),          // шагов tool-loop на одного агента
+    maxFixRounds: num(env.LCC_MAX_FIX_ROUNDS, 3),  // циклов Reviewer/Executor -> Coder
+    // Рассуждения модели: adaptive (по умолчанию) | off | число (бюджет токенов для старых моделей)
+    thinking: parseThinking(env.LCC_THINKING),
+    effort: (env.LCC_EFFORT || '').toLowerCase(),   // low | medium | high — пусто = значение по умолчанию у модели
+    promptCache: !/^(0|false|no|off)$/i.test(env.LCC_PROMPT_CACHE || ''),
     commandTimeoutMs: num(env.LCC_CMD_TIMEOUT, 120) * 1000,
     autoApprove: /^(1|true|yes)$/i.test(env.LCC_AUTO_APPROVE || ''),
     allowOutsideCwd: /^(1|true|yes)$/i.test(env.LCC_ALLOW_OUTSIDE || ''),
@@ -122,18 +134,23 @@ export async function interactiveSetup(cfg, log = console.log) {
   const base = await ask(`Эндпоинт API [Enter = ${cfg.baseUrl}]: `);
   const model = await ask(`Модель [Enter = ${cfg.model}]: `);
 
-  fs.mkdirSync(CONFIG_DIR, { recursive: true });
-  const lines = [];
-  if (fs.existsSync(GLOBAL_ENV)) lines.push(fs.readFileSync(GLOBAL_ENV, 'utf8').trimEnd());
-  lines.push(`ANTHROPIC_API_KEY=${key}`);
-  if (base) lines.push(`ANTHROPIC_BASE_URL=${base}`);
-  if (model) lines.push(`LCC_MODEL=${model}`);
-  fs.writeFileSync(GLOBAL_ENV, lines.filter(Boolean).join('\n') + '\n', { mode: 0o600 });
-  try { fs.chmodSync(GLOBAL_ENV, 0o600); } catch { /* Windows */ }
-
-  process.env.ANTHROPIC_API_KEY = key;
-  if (base) process.env.ANTHROPIC_BASE_URL = base;
-  if (model) process.env.LCC_MODEL = model;
+  saveCredentials({ key, base, model });
   log('Сохранено.\n');
   return buildConfig(cfg.cwd);
+}
+
+/** Сохраняет ключ (и опционально эндпоинт/модель) в ~/.lcc/.env, заменяя прежние значения этих переменных */
+export function saveCredentials({ key, base, model }) {
+  const updates = { ANTHROPIC_API_KEY: key };
+  if (base) updates.ANTHROPIC_BASE_URL = base;
+  if (model) updates.LCC_MODEL = model;
+
+  fs.mkdirSync(CONFIG_DIR, { recursive: true });
+  let lines = [];
+  try { lines = fs.readFileSync(GLOBAL_ENV, 'utf8').split(/\r?\n/); } catch { /* файла ещё нет */ }
+  lines = lines.filter((l) => l.trim() && !Object.keys(updates).some((k) => new RegExp(`^\\s*(export\\s+)?${k}\\s*=`).test(l)));
+  for (const [k, v] of Object.entries(updates)) lines.push(`${k}=${v}`);
+  fs.writeFileSync(GLOBAL_ENV, lines.join('\n') + '\n', { mode: 0o600 });
+  try { fs.chmodSync(GLOBAL_ENV, 0o600); } catch { /* Windows */ }
+  for (const [k, v] of Object.entries(updates)) process.env[k] = v;
 }
