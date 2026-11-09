@@ -11,6 +11,7 @@ import { CONFIG_DIR } from './config.js';
 import { formatJournal } from './memory.js';
 import { prepareStaging, activate, rollback, resetToFactory, selfStatus } from './self/improve.js';
 import { selfCheck } from './self/check.js';
+import { pullModel, MODEL_NAME } from './api/openai.js';
 
 export const MODES = ['auto', 'plan', 'solo'];
 export const TARGETS = ['project', 'self'];
@@ -43,6 +44,7 @@ export const HELP = `
   /mode [auto|plan|solo]  показать или сменить режим
   /yes                    вкл/выкл автоподтверждение записи и команд (опасные — всегда вручную)
   /model [имя]            показать или сменить модель для всех агентов
+  /pull <имя>             скачать модель на сервер Ollama (например hf.co/автор/репозиторий:Q4_K_M)
   /cd <папка>             сменить папку проекта
   /cost                   расход токенов за сессию
   /status                 среда, оболочка, настройки
@@ -277,6 +279,21 @@ export class Session {
           ui.info(`Модель для всех агентов: ${arg}`);
         }
         break;
+      case 'pull': {
+        if (!MODEL_NAME.test(arg)) { ui.warn('Укажите имя модели без пробелов: /pull qwen2.5-coder:14b или /pull hf.co/автор/репозиторий:Q4_K_M'); break; }
+        return this.#guard(async (signal) => {
+          ui.info(`Скачиваю ${arg} на сервер ${cfg.local.baseUrl}. Это может занять много времени; остановить — Ctrl+C.`);
+          let shown = -10;
+          await pullModel(cfg.local, arg, {
+            signal,
+            onProgress: (p) => {
+              // В терминале ход показывается шагами по 10%, чтобы не засыпать экран строками
+              if (p.percent !== null && p.percent >= shown + 10) { shown = p.percent - (p.percent % 10); ui.info(`  ${shown}%`); }
+            },
+          });
+          ui.done(`Модель ${arg} скачана. Выбрать её: /model ${arg}`);
+        });
+      }
       case 'diff': {
         const d = this.orchestrator.changes.diff();
         if (d) ui.print(d); else ui.info('В последней задаче изменений нет.');
