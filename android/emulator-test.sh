@@ -44,5 +44,18 @@ if ! adb shell pidof "$PKG" >/dev/null; then
   exit 1
 fi
 
+# Страница интерфейса должна отрисоваться во встроенном браузере: ищем её заголовок в дереве экрана
+page=""
+for _ in $(seq 1 10); do
+  adb shell uiautomator dump /sdcard/lcc-ui.xml >/dev/null 2>&1 || true
+  if adb shell cat /sdcard/lcc-ui.xml 2>/dev/null | grep -q "Local Claude Code"; then page=1; break; fi
+  sleep 3
+done
 adb exec-out screencap -p > emulator-screen.png || true
-echo "OK: приложение работает, сервер на порту $port отвечает и требует ключ"
+if [ -z "$page" ]; then
+  echo "ОШИБКА: интерфейс не появился на экране. Дерево экрана:"
+  adb shell cat /sdcard/lcc-ui.xml 2>/dev/null | head -c 3000 || true
+  exit 1
+fi
+
+echo "OK: приложение работает, сервер на порту $port требует ключ, интерфейс отрисован"
