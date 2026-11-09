@@ -39,6 +39,10 @@ try {
   const version = await run(['--version'], { cwd, env });
   if (version.code !== 0 || version.out.trim() !== VERSION) fail(`--version: код ${version.code}, вывод "${version.out.trim()}", ожидалось "${VERSION}"`);
 
+  // Самопроверка внутри готовой сборки: копия кода, загрузка модулей в отдельном потоке, запуск веб-сервера
+  const check = await run(['--self-check'], { cwd, env });
+  if (check.code !== 0 || !/Самопроверка пройдена/.test(check.out)) fail(`--self-check: код ${check.code}:\n${check.out}`);
+
   const task = await run(['-y', '-p', 'создай hello.js'], { cwd, env });
   if (task.code !== 0) fail(`задача завершилась с кодом ${task.code}:\n${task.out}`);
   const file = path.join(cwd, 'hello.js');
@@ -47,7 +51,7 @@ try {
   if (content !== "console.log('hello');\n") fail(`неожиданное содержимое hello.js: ${JSON.stringify(content)}`);
   if (!/PASS/.test(task.out)) fail(`в выводе нет PASS:\n${task.out}`);
 
-  console.log(`E2E OK: ${[cmd, ...baseArgs].join(' ')} — версия ${VERSION}, конвейер отработал, запросов к API: ${mock.requests.length}`);
+  console.log(`E2E OK: ${[cmd, ...baseArgs].join(' ')} — версия ${VERSION}, самопроверка пройдена, конвейер отработал, запросов к API: ${mock.requests.length}`);
 } finally {
   mock.server.close();
 }

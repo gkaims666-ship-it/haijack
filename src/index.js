@@ -32,6 +32,7 @@ Local Claude Code v${VERSION} — терминальный ИИ-ассистен
       --cwd <папка>            корень проекта
       --web                    веб-интерфейс вместо терминального
       --port <номер>           порт веб-интерфейса (по умолчанию свободный)
+      --self-check             проверить, что код приложения загружается и интерфейс запускается
   -v, --version
   -h, --help
 `;
@@ -53,6 +54,7 @@ export function parseArgs(argv) {
       case '-p': case '--print': o.print = val(); break;
       case '--cwd': o.cwd = val(); break;
       case '--web': o.web = true; break;
+      case '--self-check': o.selfCheck = true; break;
       case '--port': o.port = val(); break;
       default:
         if (a.startsWith('--mode=')) o.mode = a.slice(7);
@@ -86,6 +88,16 @@ export async function main(argv = process.argv.slice(2), boot = {}) {
   try { args = parseArgs(argv); } catch (e) { console.error(e.message); return 2; }
   if (args.help) { console.log(USAGE); return 0; }
   if (args.version) { console.log(VERSION); return 0; }
+  if (args.selfCheck) {
+    // Диагностика: та же самопроверка, что выполняется перед установкой доработанной версии
+    const { prepareStaging } = await import('./self/improve.js');
+    const { selfCheck } = await import('./self/check.js');
+    const dir = prepareStaging();
+    const check = await selfCheck(dir, { runTests: false });
+    fs.rmSync(dir, { recursive: true, force: true });
+    console.log(check.report);
+    return check.ok ? 0 : 1;
+  }
 
   const cwd = path.resolve(args.cwd || process.cwd());
   if (!fs.existsSync(cwd) || !fs.statSync(cwd).isDirectory()) {
