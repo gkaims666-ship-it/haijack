@@ -52,10 +52,18 @@ for _ in $(seq 1 10); do
   sleep 3
 done
 adb exec-out screencap -p > emulator-screen.png || true
+
+# Служба работы в фоне должна быть запущена и переведена в режим «на переднем плане»
+if ! adb shell dumpsys activity services "$PKG" | grep -q "isForeground=true"; then
+  echo "ОШИБКА: служба работы в фоне не запущена"
+  adb shell dumpsys activity services "$PKG" | head -n 40 || true
+  adb logcat -d -s LCC || true
+  exit 1
+fi
 if [ -z "$page" ]; then
   echo "ОШИБКА: интерфейс не появился на экране. Дерево экрана:"
   adb shell cat /sdcard/lcc-ui.xml 2>/dev/null | head -c 3000 || true
   exit 1
 fi
 
-echo "OK: приложение работает, сервер на порту $port требует ключ, интерфейс отрисован"
+echo "OK: приложение работает, сервер на порту $port требует ключ, интерфейс отрисован, служба работы в фоне запущена"

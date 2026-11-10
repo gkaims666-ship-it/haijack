@@ -42,6 +42,7 @@ import java.security.SecureRandom;
 public class MainActivity extends Activity {
     private static final String TAG = "LCC";
     private static final int STORAGE_REQUEST = 1;
+    private static final int NOTIFICATION_REQUEST = 2;
     private static final int STARTUP_TIMEOUT_MS = 60_000;
 
     // Node живёт дольше экрана (экран пересоздаётся, процесс — нет), поэтому состояние статическое
@@ -49,6 +50,9 @@ public class MainActivity extends Activity {
     private static int port;
     private static String token;
     private static volatile Integer nodeExitCode;
+
+    static int serverPort() { return port; }
+    static String serverToken() { return token; }
 
     private WebView webView;
     private TextView status;
@@ -227,7 +231,22 @@ public class MainActivity extends Activity {
             }
         }, "node-main", 16L * 1024 * 1024); // V8 нужен стек больше стандартного для Java-потока
         node.start();
+        keepAlive();
         showWhenReady();
+    }
+
+    /** Запускает службу, которая не даёт системе остановить приложение в фоне. */
+    private void keepAlive() {
+        try {
+            if (Build.VERSION.SDK_INT >= 33 && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
+                // Без разрешения служба тоже работает, просто её уведомление не показывается
+                requestPermissions(new String[] {Manifest.permission.POST_NOTIFICATIONS}, NOTIFICATION_REQUEST);
+            }
+            Intent service = new Intent(this, KeepAliveService.class);
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) startForegroundService(service); else startService(service);
+        } catch (RuntimeException e) {
+            Log.w(TAG, "keep-alive service failed to start", e);
+        }
     }
 
     /** Ждёт, пока сервер программы начнёт принимать соединения, и открывает интерфейс. */
