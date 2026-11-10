@@ -40,7 +40,7 @@ jobs:
 
       - name: Сборка APK
         working-directory: android
-        run: gradle --no-daemon assembleRelease
+        run: gradle --no-daemon assembleRelease assembleDebug
 
       - name: Проверка содержимого APK
         run: |
@@ -65,6 +65,14 @@ jobs:
             local-claude-code.apk.sha256
           if-no-files-found: error
 
+      # Отладочная сборка нужна только для проверки в эмуляторе и в релиз не попадает
+      - uses: actions/upload-artifact@v4
+        with:
+          name: debug-apk
+          path: android/app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
+          retention-days: 3
+
   emulator-test:
     name: Запуск в эмуляторе
     needs: build
@@ -76,6 +84,14 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           name: local-claude-code-apk
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: debug-apk
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
 
       - name: Доступ к KVM
         run: |
@@ -90,7 +106,7 @@ jobs:
           arch: x86_64
           target: default
           disable-animations: true
-          script: bash android/emulator-test.sh local-claude-code.apk
+          script: bash android/emulator-test.sh local-claude-code.apk && bash android/emulator-self-test.sh app-debug.apk
 
       - uses: actions/upload-artifact@v4
         if: always()

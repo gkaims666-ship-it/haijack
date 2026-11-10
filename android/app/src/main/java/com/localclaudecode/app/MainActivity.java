@@ -204,6 +204,12 @@ public class MainActivity extends Activity {
         StringBuilder hex = new StringBuilder();
         for (byte b : random) hex.append(String.format("%02x", b));
         token = hex.toString();
+        // Только в отладочной сборке (она не публикуется): проверка в эмуляторе задаёт ключ доступа сама,
+        // чтобы управлять приложением снаружи. В обычной сборке ключ всегда случайный.
+        if ((getApplicationInfo().flags & android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE) != 0) {
+            String given = getIntent().getStringExtra("lcc_token");
+            if (given != null && given.matches("[0-9a-f]{48}")) token = given;
+        }
 
         Thread node = new Thread(null, () -> {
             try {
