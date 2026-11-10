@@ -32,20 +32,26 @@ jobs:
       - name: Проверка exe на мок-сервере API
         run: node test/e2e.mjs dist/lcc.exe
 
+      - name: Проверка оконной сборки на мок-сервере API
+        run: node test/e2e.mjs dist/LocalClaudeCode.exe
+
+      - name: Оконная сборка открывает окно приложения и завершается вместе с ним
+        run: node scripts/test-window.mjs dist/LocalClaudeCode.exe
+
       - name: Контрольная сумма
         shell: pwsh
         run: |
-          $hash = (Get-FileHash dist/lcc.exe -Algorithm SHA256).Hash.ToLower()
-          "$hash  lcc.exe" | Out-File -Encoding ascii dist/lcc.exe.sha256
-          Get-Content dist/lcc.exe.sha256
+          $lines = foreach ($f in 'LocalClaudeCode.exe', 'lcc.exe') { "$((Get-FileHash dist/$f -Algorithm SHA256).Hash.ToLower())  $f" }
+          $lines | Out-File -Encoding ascii dist/sha256.txt
+          Get-Content dist/sha256.txt
 
       - uses: actions/upload-artifact@v4
         with:
           name: lcc-windows-x64
           path: |
+            dist/LocalClaudeCode.exe
             dist/lcc.exe
-            dist/lcc-web.cmd
-            dist/lcc.exe.sha256
+            dist/sha256.txt
           if-no-files-found: error
 
       - name: Публикация релиза
@@ -66,8 +72,11 @@ jobs:
             flags="--prerelease"
             gh release delete "$tag" --cleanup-tag --yes 2>/dev/null || true
           fi
-          gh release create "$tag" dist/lcc.exe dist/lcc-web.cmd dist/lcc.exe.sha256 \
+          gh release create "$tag" dist/LocalClaudeCode.exe dist/lcc.exe dist/sha256.txt \
             --target "$GITHUB_SHA" --title "$title" $flags \
-            --notes "Один файл \`lcc.exe\` для Windows x64, Node.js внутри. Коммит ${GITHUB_SHA::7}.
+            --notes "Windows x64, Node.js внутри. Коммит ${GITHUB_SHA::7}.
 
-          Интерфейс в браузере: положите \`lcc-web.cmd\` рядом с \`lcc.exe\` и запустите его двойным щелчком (или выполните \`lcc.exe --web\`). Консольный режим: откройте терминал в папке проекта и выполните \`путь\\к\\lcc.exe\`. Файл не подписан, поэтому SmartScreen при первом запуске покажет предупреждение: «Подробнее» → «Выполнить в любом случае»."
+          **LocalClaudeCode.exe** — приложение с окном: запускается двойным щелчком, открывает интерфейс в отдельном окне, закрытие окна завершает программу.
+          **lcc.exe** — то же самое для терминала: откройте терминал в папке проекта и выполните \`путь\\к\\lcc.exe\`.
+
+          Файлы не подписаны, поэтому SmartScreen при первом запуске покажет предупреждение: «Подробнее» → «Выполнить в любом случае»."
