@@ -159,6 +159,12 @@ export async function main(argv = process.argv.slice(2), boot = {}) {
       host: process.env.LCC_WEB_HOST || '127.0.0.1',
       token: process.env.LCC_WEB_TOKEN || undefined,
       notices,
+      // В режиме окна программа завершается, когда окно закрыто (см. src/web/server.js)
+      autoStop: desktop ? {
+        graceMs: Number(process.env.LCC_APP_GRACE_MS) || 4000,
+        idleMs: Number(process.env.LCC_APP_IDLE_MS) || 10 * 60 * 1000,
+        startMs: Number(process.env.LCC_APP_START_MS) || 3 * 60 * 1000,
+      } : null,
     });
     bootOk();
     console.log(`Local Claude Code v${VERSION} — веб-интерфейс запущен.`);
@@ -167,14 +173,14 @@ export async function main(argv = process.argv.slice(2), boot = {}) {
     const stop = () => web.close();
     if (desktop) {
       desktop.rememberRunning({ port: web.port, token: web.token });
-      // Окно переживает перезапуск программы (после самоулучшения): страница сама подключается заново
-      let win = globalThis.__lccWindow;
-      if (!win || win.exitCode !== null) win = desktop.openAppWindow(web.url);
-      globalThis.__lccWindow = win;
-      if (win) win.once('exit', stop); // закрыли окно — программа завершается
-      else {
-        console.log('Подходящий браузер для окна приложения не найден — открываю интерфейс в браузере по умолчанию.');
-        openBrowser(web.url);
+      // Окно переживает перезапуск программы (после самоулучшения): страница сама подключается заново.
+      // За процессом браузера не следим: он может завершиться сразу, передав окно другому процессу.
+      if (!globalThis.__lccWindowOpened) {
+        globalThis.__lccWindowOpened = true;
+        if (!desktop.openAppWindow(web.url, { detached: true })) {
+          console.log('Подходящий браузер для окна приложения не найден — открываю интерфейс в браузере по умолчанию.');
+          openBrowser(web.url);
+        }
       }
     } else if (!process.env.LCC_WEB_TOKEN && !process.env.LCC_NO_OPEN && process.stdout.isTTY) {
       // При обычном запуске с компьютера открываем интерфейс сами; после перезапуска страница уже открыта
@@ -189,7 +195,6 @@ export async function main(argv = process.argv.slice(2), boot = {}) {
     process.off('unhandledRejection', logError);
     process.off('SIGINT', stop);
     process.off('SIGTERM', stop);
-    globalThis.__lccWindow?.off('exit', stop);
     if (outcome !== 'restart') desktop?.forgetRunning();
     if (outcome === 'restart') {
       // Новая версия должна подняться на том же адресе, чтобы открытая страница переподключилась сама
