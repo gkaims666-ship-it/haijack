@@ -1229,6 +1229,11 @@ button.cat-item:hover { border-color: var(--line-strong); }
     confirmBox('Очистить диалог?', 'Переписка исчезнет с экрана, а агенты начнут с чистого листа — так программа тратит меньше ресурсов. Накопленный опыт перед этим сохранится в памяти.', 'Очистить', function () { sendText('/clear'); });
   };
 
+  // Окно закрывают — сообщаем программе, чтобы она завершилась сразу, а не ждала потери связи
+  window.addEventListener('pagehide', function () {
+    try { navigator.sendBeacon('/api/bye?t=' + encodeURIComponent(token)); } catch (e) { /* сигнал необязателен */ }
+  });
+
   drawRelay();
   connect();
 })();
