@@ -71,7 +71,7 @@ const isHttpUrl = (v) => /^https?:\/\/[^\s/]+/i.test(v);
 /**
  * Запускает веб-режим. Возвращает { urls, port, token, close(), closed: Promise<'stop'|'restart'> }.
  */
-export async function startWeb({ cfg, mode, port = 0, host = '127.0.0.1', token, notices = [], persist = true }) {
+export async function startWeb({ cfg, mode, port = 0, host = '127.0.0.1', token, notices = [], persist = true, autoStop = null }) {
   // persist: диалог сохраняется на диск и восстанавливается после перезапуска
   const hub = new EventHub(persist ? { file: path.join(CONFIG_DIR, 'session', 'events.jsonl') } : {});
   const ui = new WebRenderer({ cfg, hub });
@@ -90,7 +90,7 @@ export async function startWeb({ cfg, mode, port = 0, host = '127.0.0.1', token,
   let running = false; // идёт обработка ввода (шире, чем session.busy: включает команды)
   const snapshot = () => ({
     t: 'state', ...session.state(), busy: running, needsSetup: !hasCredentials(cfg),
-    tokens: usage.totals(), bootId, pull: pullView(),
+    tokens: usage.totals(), bootId, pull: pullView(), windows: clients, // windows — сколько окон сейчас подключено
   });
   const pushState = () => hub.emit(snapshot(), { volatile: true });
 
@@ -132,12 +132,38 @@ export async function startWeb({ cfg, mode, port = 0, host = '127.0.0.1', token,
   function shutdown(outcome) {
     if (closing) return;
     closing = true;
+    clearTimeout(stopTimer);
     session.abort();
     pull?.controller.abort();
     hub.cancelAsks('no');
     hub.flush();
     server.closeAllConnections?.();
     server.close(() => finish(outcome));
+  }
+
+  // ---------- окно приложения: завершение вместе с окном ----------
+  // autoStop включается в режиме окна. Закрытие окна определяется по связи со страницей, а не по
+  // процессу браузера: тот, кого мы запустили, у Edge сразу передаёт работу другому процессу и выходит.
+  //   graceMs — страница сообщила о закрытии и связь пропала: ждём столько (вдруг это перезагрузка);
+  //   idleMs  — связь пропала без сообщения (окно «уснуло» или упало): ждём дольше;
+  //   startMs — окно так и не подключилось после запуска.
+  // Пока идёт задача или загрузка модели, программа не завершается.
+  let clients = 0;
+  let byeAt = 0;
+  let stopTimer = null;
+  const working = () => running || Boolean(pull && !pull.done);
+  function scheduleStop(ms) {
+    if (!autoStop) return;
+    clearTimeout(stopTimer);
+    stopTimer = setTimeout(() => {
+      if (clients > 0) return;
+      if (working()) scheduleStop(autoStop.idleMs);
+      else shutdown('stop');
+    }, ms);
+  }
+  function clientGone() {
+    clients--;
+    if (clients === 0) scheduleStop(Date.now() - byeAt < 5000 ? autoStop?.graceMs : autoStop?.idleMs);
   }
 
   // ---------- ввод ----------
@@ -288,7 +314,9 @@ export async function startWeb({ cfg, mode, port = 0, host = '127.0.0.1', token,
             for (const ev of hub.since(last)) write(ev);
             const unsubscribe = hub.subscribe(write);
             const ping = setInterval(() => res.write(': ping\n\n'), 20000);
-            req.on('close', () => { clearInterval(ping); unsubscribe(); });
+            clients++;
+            clearTimeout(stopTimer);
+            req.on('close', () => { clearInterval(ping); unsubscribe(); clientGone(); });
             return undefined;
           }
           case '/api/settings':
@@ -318,6 +346,14 @@ export async function startWeb({ cfg, mode, port = 0, host = '127.0.0.1', token,
       }
 
       if (req.method !== 'POST') return send(res, 404, { error: 'не найдено' });
+      if (url.pathname === '/api/bye') {
+        // Страница сообщает, что её закрывают. Браузер шлёт такой сигнал без своих заголовков;
+        // он ничего не меняет, а только сокращает ожидание перед завершением, если других окон нет.
+        byeAt = Date.now();
+        req.resume();
+        if (clients === 0) scheduleStop(autoStop?.graceMs);
+        return send(res, 200, { ok: true });
+      }
       if (req.headers['x-lcc'] !== '1') return send(res, 403, { error: 'нет заголовка X-LCC' });
       const body = await readJson(req);
 
@@ -401,6 +437,7 @@ export async function startWeb({ cfg, mode, port = 0, host = '127.0.0.1', token,
   if (lan) for (const ip of lanAddresses()) urls.push(`http://${ip}:${actualPort}/?t=${secret}`);
 
   for (const n of notices) hub.emit({ t: 'msg', level: 'warn', text: n });
+  if (autoStop) scheduleStop(autoStop.startMs);
 
   return {
     url: urls[0], urls, port: actualPort, token: secret, hub, session, closed,
