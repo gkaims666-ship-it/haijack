@@ -246,3 +246,17 @@ test('main возвращает код 75 после установки ново
   assert.match(res.stdout, /Работает доработанная версия v1/);
   assert.match(res.stdout, /После перезапуска будет работать заводская версия/);
 });
+
+test('самопроверка работает, когда системной временной папки нет (Android, Termux)', async () => {
+  reset();
+  const { tempBase } = await import('../src/self/store.js');
+  const saved = process.env.TMPDIR;
+  process.env.TMPDIR = path.join(TEST_HOME, 'нет-такой-папки');
+  try {
+    assert.equal(tempBase(), path.join(TEST_HOME, 'tmp'));
+    const check = await selfCheck(prepareStaging());
+    assert.equal(check.ok, true, check.report);
+  } finally {
+    if (saved === undefined) delete process.env.TMPDIR; else process.env.TMPDIR = saved;
+  }
+});

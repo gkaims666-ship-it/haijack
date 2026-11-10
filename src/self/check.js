@@ -1,11 +1,11 @@
 // Запуск самопроверки версии-кандидата и, если на машине есть node, её тестов.
 
 import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { Worker } from 'node:worker_threads';
 import { nodeBinary } from '../tools/checks.js';
+import { tempBase } from './store.js';
 
 /**
  * @returns {Promise<{ok: boolean, report: string}>}
@@ -27,7 +27,8 @@ export async function selfCheck(dir, { timeoutMs = 90000, runTests = process.env
 
 function runWorker(dir, timeoutMs) {
   return new Promise((resolve) => {
-    const home = fs.mkdtempSync(path.join(os.tmpdir(), 'lcc-selfcheck-home-'));
+    const base = tempBase();
+    const home = fs.mkdtempSync(path.join(base, 'lcc-selfcheck-home-'));
     let settled = false;
     const finish = (errors) => {
       if (settled) return;
@@ -38,7 +39,7 @@ function runWorker(dir, timeoutMs) {
     };
     // Проверяющий код берётся из работающей версии, а не из кандидата; настройки — во временной папке
     const worker = new Worker(new URL('./check-worker.js', import.meta.url), {
-      workerData: { lccSelfCheck: true, dir },
+      workerData: { lccSelfCheck: true, dir, tmp: base },
       env: { ...process.env, LCC_HOME: home, LCC_NO_LIVE: '1', ANTHROPIC_API_KEY: 'selfcheck', LCC_PROVIDER: '' },
       stdout: true,
       stderr: true,
