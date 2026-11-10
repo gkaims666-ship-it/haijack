@@ -46,7 +46,7 @@ const deadline = Date.now() + 240000;
 let installed = false;
 while (Date.now() < deadline) {
   if (events.some((e) => e.t === 'msg' && /Установлена версия приложения v1/.test(e.text))) { installed = true; break; }
-  if (events.some((e) => e.t === 'msg' && /Новая версия не установлена|не доведена до конца/.test(e.text))) break;
+  if (events.some((e) => e.t === 'msg' && (e.level === 'error' || /Новая версия не установлена|не доведена до конца/.test(e.text)))) break;
   await sleep(500);
 }
 ac.abort();
