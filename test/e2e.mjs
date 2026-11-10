@@ -51,7 +51,18 @@ try {
   if (content !== "console.log('hello');\n") fail(`неожиданное содержимое hello.js: ${JSON.stringify(content)}`);
   if (!/PASS/.test(task.out)) fail(`в выводе нет PASS:\n${task.out}`);
 
-  console.log(`E2E OK: ${[cmd, ...baseArgs].join(' ')} — версия ${VERSION}, самопроверка пройдена, конвейер отработал, запросов к API: ${mock.requests.length}`);
+  // Самоулучшение целиком: правка копии кода, самопроверка, установка версии; следующий запуск работает на ней
+  const self = await run(['-y', '-p', '/self SELFTEST добавь отметку'], { cwd, env });
+  if (self.code !== 0 || !/Установлена версия приложения v1/.test(self.out)) fail(`самоулучшение не установило версию (код ${self.code}):\n${self.out}`);
+  const live = path.join(home, 'app', 'v1', 'src', 'usage.js');
+  if (!fs.existsSync(live) || !fs.readFileSync(live, 'utf8').includes("SELFTEST_MARK = 'ok'")) fail(`в установленной версии нет изменения: ${live}`);
+  const status = await run(['-y', '-p', '/self status'], { cwd, env });
+  if (!/Работает доработанная версия v1/.test(status.out)) fail(`после установки запускается не доработанная версия:\n${status.out}`);
+  const reset = await run(['-y', '-p', '/self reset'], { cwd, env });
+  const after = await run(['-y', '-p', '/self status'], { cwd, env });
+  if (!/Работает заводская версия/.test(after.out)) fail(`возврат к заводской версии не сработал:\n${reset.out}\n${after.out}`);
+
+  console.log(`E2E OK: ${[cmd, ...baseArgs].join(' ')} — версия ${VERSION}, самопроверка пройдена, конвейер отработал, самоулучшение установило и откатило версию, запросов к API: ${mock.requests.length}`);
 } finally {
   mock.server.close();
 }

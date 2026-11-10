@@ -183,6 +183,7 @@ test('самоулучшение через сессию: правка копи�
   const orch = new Orchestrator({ client, cfg, ui, usage: new Usage() });
   const session = new Session({ cfg, orchestrator: orch, usage: new Usage(), ui });
 
+  const runningCode = fs.readFileSync(path.join(REPO, 'src', 'usage.js'), 'utf8');
   const outcome = await session.handle('/self добавь константу MARK');
   assert.equal(outcome, 'restart', ui.log.join('\n'));
   assert.equal(session.restartRequested, true);
@@ -190,7 +191,7 @@ test('самоулучшение через сессию: правка копи�
 
   // Изменение — в установленной версии; работающий код и папка проекта не тронуты
   assert.match(fs.readFileSync(path.join(versionDir(1), 'src', 'usage.js'), 'utf8'), /export const MARK = 'improved';/);
-  assert.doesNotMatch(fs.readFileSync(path.join(REPO, 'src', 'usage.js'), 'utf8'), /MARK/);
+  assert.equal(fs.readFileSync(path.join(REPO, 'src', 'usage.js'), 'utf8'), runningCode);
   assert.equal(cfg.cwd, cwd);
   assert.deepEqual(fs.readdirSync(cwd), []);
 

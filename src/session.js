@@ -53,6 +53,11 @@ export const HELP = `
   !<команда>              выполнить команду в оболочке напрямую, без ИИ
 `;
 
+/** Похоже ли, что задача — про само приложение (а не про проект пользователя) */
+export function looksLikeSelfTask(text) {
+  return /(сам(о|ого|ому|им|ом)\s+приложени|эт(о|ого|ому|им|ом)\s+приложени|в\s+приложени[еи]\s+(добав|сдела|измен|исправ|поменя)|улучши(ть)?\s+себя|сво(й|его|ю|ём)\s+(собственн\S+\s+)?(код|интерфейс)|local\s+claude\s+code)/i.test(text);
+}
+
 const isAnswerOnly = (plan) => /РЕЖИМ:\s*ОТВЕТ/i.test(plan) && !/РЕЖИМ:\s*ИЗМЕНЕНИЯ/i.test(plan);
 const MAX_LOOP_FAILURES = 3; // подряд неудачных итераций непрерывной задачи до остановки
 
@@ -71,6 +76,7 @@ export class Session {
     this.target = 'project';     // куда идут обычные задачи: 'project' или 'self'
     this.controller = null;      // AbortController выполняющейся задачи
     this.looping = false;
+    this.selfHint = true;        // предлагать ли режим «приложение» для задач, похожих на самоулучшение
     this.restartRequested = false; // установлена новая версия приложения — нужен перезапуск
     this.onClear = null;         // хук интерфейса: очистить показанный диалог
   }
@@ -99,7 +105,7 @@ export class Session {
     let result;
     if (text.startsWith('/')) result = await this.#command(text);
     else if (text.startsWith('!')) result = await this.#shell(text.slice(1).trim());
-    else result = await this.#guard((signal) => this.#dispatch(text, signal));
+    else result = await this.#guard((signal) => this.#task(text, signal));
     if (this.restartRequested) return 'restart';
     return result;
   }
@@ -125,6 +131,20 @@ export class Session {
 
   #dispatch(text, signal) {
     return this.target === 'self' ? this.#selfTask(text, signal) : this.#projectTask(text, signal);
+  }
+
+  /**
+   * Обычная задача. Если она похожа на просьбу улучшить само приложение, программа сама
+   * предлагает выполнить её над кодом приложения — помнить про переключатель не нужно.
+   */
+  async #task(text, signal) {
+    if (this.target === 'project' && this.mode !== 'solo' && this.selfHint && this.ui.canAsk && looksLikeSelfTask(text)) {
+      if (await this.ui.confirm('Похоже, задача про само приложение. Выполнить её над кодом приложения — с самопроверкой и установкой новой версии?')) {
+        return this.#selfTask(text, signal);
+      }
+      this.selfHint = false; // отказ запоминается до конца сессии, чтобы не переспрашивать
+    }
+    return this.#dispatch(text, signal);
   }
 
   async #projectTask(text, signal) {

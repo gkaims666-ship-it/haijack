@@ -6,6 +6,10 @@
 import { Agent } from './agent.js';
 import { TOOLSETS } from '../tools/index.js';
 import { ChangeSet } from '../tools/changes.js';
+import fs from 'node:fs';
+import path from 'node:path';
+
+const DIALOG_LIMIT = 1_500_000; // символов сохраняемого диалога соло-агента
 
 const REVIEW_DIFF_LIMIT = 80_000; // символов diff в сообщении Reviewer
 
@@ -24,13 +28,14 @@ export function isDone(res) {
 }
 
 export class Orchestrator {
-  constructor({ client, cfg, ui, usage, memory }) {
+  constructor({ client, cfg, ui, usage, memory, dialogFile }) {
     this.client = client;
     this.cfg = cfg;
     this.ui = ui;
     this.usage = usage;
     this.memory = memory; // долговременная память и журнал (может отсутствовать)
     this.history = []; // краткая память о прошлых задачах сессии
+    this.dialogFile = dialogFile; // куда сохранять диалог соло-агента (необязательно)
     this.changes = new ChangeSet(cfg.cwd);
     const mk = (role, tools) => new Agent({ role, toolNames: tools, client, cfg, ui, usage, changes: this.changes, memory });
     this.agents = {
@@ -40,12 +45,43 @@ export class Orchestrator {
       executor: mk('executor', TOOLSETS.executor),
       solo: mk('solo', TOOLSETS.all),
     };
+    this.#loadDialog();
   }
 
   resetAll() {
     for (const a of Object.values(this.agents)) a.reset();
     this.history = [];
     this.changes.clear();
+    this.#saveDialog();
+  }
+
+  /** Сохраняет диалог соло-агента, чтобы после перезапуска он помнил разговор */
+  #saveDialog() {
+    if (!this.dialogFile) return;
+    try {
+      let messages = this.agents.solo.messages;
+      if (!messages.length) { fs.rmSync(this.dialogFile, { force: true }); return; }
+      // Слишком длинный диалог сохраняется с более позднего места — обязательно с обычной реплики пользователя,
+      // иначе история начнётся с результата инструмента без вызова, и API её не примет
+      while (JSON.stringify(messages).length > DIALOG_LIMIT && messages.length > 2) {
+        const next = messages.findIndex((m, i) => i > 0 && m.role === 'user' && typeof m.content === 'string');
+        if (next === -1) return;
+        messages = messages.slice(next);
+      }
+      fs.mkdirSync(path.dirname(this.dialogFile), { recursive: true });
+      fs.writeFileSync(this.dialogFile, JSON.stringify({ cwd: this.cfg.cwd, messages }));
+    } catch { /* сохранение диалога — удобство, а не необходимость */ }
+  }
+
+  #loadDialog() {
+    if (!this.dialogFile) return;
+    try {
+      const saved = JSON.parse(fs.readFileSync(this.dialogFile, 'utf8'));
+      const ok = saved.cwd === this.cfg.cwd && Array.isArray(saved.messages)
+        && saved.messages.every((m) => (m.role === 'user' || m.role === 'assistant') && (typeof m.content === 'string' || Array.isArray(m.content)))
+        && saved.messages[saved.messages.length - 1]?.role === 'assistant';
+      if (ok) this.agents.solo.messages = saved.messages;
+    } catch { /* файла нет или он повреждён — начинаем с чистого диалога */ }
   }
 
   /** Сменить рабочую папку: агенты пересобирают системный промт под новый проект */
@@ -54,6 +90,7 @@ export class Orchestrator {
     this.changes = new ChangeSet(cwd);
     for (const a of Object.values(this.agents)) { a.changes = this.changes; a.reset(); }
     this.history = [];
+    this.#saveDialog();
   }
 
   /**
@@ -78,7 +115,12 @@ export class Orchestrator {
   /** Соло-режим: один агент со всеми инструментами и общей историей диалога */
   async solo(task, signal) {
     this.changes.clear(); // /undo и /diff относятся к последней задаче
-    const text = await this.agents.solo.send(task, { signal });
+    let text;
+    try {
+      text = await this.agents.solo.send(task, { signal });
+    } finally {
+      this.#saveDialog();
+    }
     const files = this.changes.files();
     if (files.length) {
       this.memory?.log({ task, mode: 'solo', cwd: this.cfg.cwd, files, done: true });
