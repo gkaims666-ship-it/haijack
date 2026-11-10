@@ -23,6 +23,7 @@ Local Claude Code v${VERSION} — терминальный ИИ-ассистен
 Использование:
   lcc                       интерактивный режим в текущей папке
   lcc -p "задача"           выполнить одну задачу и выйти
+  lcc --app                 окно приложения с интерфейсом
   lcc --web                 интерфейс в браузере (http://127.0.0.1:<порт>)
   lcc --cwd <папка>         рабочая папка проекта
 
@@ -32,7 +33,8 @@ Local Claude Code v${VERSION} — терминальный ИИ-ассистен
       --model <имя>            модель для всех агентов
   -p, --print <задача>         однократный запуск
       --cwd <папка>            корень проекта
-      --web                    веб-интерфейс вместо терминального
+      --app                    интерфейс в отдельном окне приложения
+      --web                    интерфейс во вкладке браузера
       --port <номер>           порт веб-интерфейса (по умолчанию свободный)
       --self-check             проверить, что код приложения загружается и интерфейс запускается
   -v, --version
@@ -56,6 +58,7 @@ export function parseArgs(argv) {
       case '-p': case '--print': o.print = val(); break;
       case '--cwd': o.cwd = val(); break;
       case '--web': o.web = true; break;
+      case '--app': o.web = true; o.app = true; break;
       case '--self-check': o.selfCheck = true; break;
       case '--port': o.port = val(); break;
       default:
@@ -137,6 +140,18 @@ export async function main(argv = process.argv.slice(2), boot = {}) {
     // Веб-режим сам покажет экран входа в браузере, если доступ к модели не настроен
     applyArgs();
     const { startWeb, logError } = await import('./web/server.js');
+    const desktop = args.app ? await import('./desktop.js') : null;
+    if (desktop && !process.env.LCC_WEB_TOKEN) {
+      // Приложение уже запущено — открываем ещё одно окно к нему и выходим
+      const running = await desktop.findRunning();
+      if (running) {
+        const win = desktop.openAppWindow(running, { detached: true });
+        if (!win) openBrowser(running);
+        // Даём системе запустить окно, прежде чем этот процесс завершится
+        await new Promise((resolve) => setTimeout(resolve, 300));
+        return 0;
+      }
+    }
     const web = await startWeb({
       cfg,
       mode: args.mode,
@@ -149,9 +164,22 @@ export async function main(argv = process.argv.slice(2), boot = {}) {
     console.log(`Local Claude Code v${VERSION} — веб-интерфейс запущен.`);
     for (const url of web.urls) console.log(`  ${url}`);
     console.log('Ссылка содержит ключ доступа — не передавайте её другим. Ctrl+C — остановить.');
-    // При обычном запуске с компьютера открываем интерфейс сами; после перезапуска страница уже открыта
-    if (!process.env.LCC_WEB_TOKEN && !process.env.LCC_NO_OPEN && process.stdout.isTTY) openBrowser(web.url);
     const stop = () => web.close();
+    if (desktop) {
+      desktop.rememberRunning({ port: web.port, token: web.token });
+      // Окно переживает перезапуск программы (после самоулучшения): страница сама подключается заново
+      let win = globalThis.__lccWindow;
+      if (!win || win.exitCode !== null) win = desktop.openAppWindow(web.url);
+      globalThis.__lccWindow = win;
+      if (win) win.once('exit', stop); // закрыли окно — программа завершается
+      else {
+        console.log('Подходящий браузер для окна приложения не найден — открываю интерфейс в браузере по умолчанию.');
+        openBrowser(web.url);
+      }
+    } else if (!process.env.LCC_WEB_TOKEN && !process.env.LCC_NO_OPEN && process.stdout.isTTY) {
+      // При обычном запуске с компьютера открываем интерфейс сами; после перезапуска страница уже открыта
+      openBrowser(web.url);
+    }
     process.on('uncaughtException', logError);
     process.on('unhandledRejection', logError);
     process.on('SIGINT', stop);
@@ -161,6 +189,8 @@ export async function main(argv = process.argv.slice(2), boot = {}) {
     process.off('unhandledRejection', logError);
     process.off('SIGINT', stop);
     process.off('SIGTERM', stop);
+    globalThis.__lccWindow?.off('exit', stop);
+    if (outcome !== 'restart') desktop?.forgetRunning();
     if (outcome === 'restart') {
       // Новая версия должна подняться на том же адресе, чтобы открытая страница переподключилась сама
       process.env.LCC_WEB_PORT = String(web.port);
