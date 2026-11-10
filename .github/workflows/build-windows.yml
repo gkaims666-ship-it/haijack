@@ -35,8 +35,11 @@ jobs:
       - name: Проверка оконной сборки на мок-сервере API
         run: node test/e2e.mjs dist/LocalClaudeCode.exe
 
-      - name: Оконная сборка открывает окно приложения и завершается вместе с ним
+      - name: Оконная сборка не завершается раньше окна
         run: node scripts/test-window.mjs dist/LocalClaudeCode.exe
+
+      - name: Оконная сборка с настоящим Edge
+        run: node scripts/test-window.mjs dist/LocalClaudeCode.exe --edge
 
       - name: Контрольная сумма
         shell: pwsh
