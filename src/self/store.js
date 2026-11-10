@@ -18,6 +18,22 @@ export const stagingDir = () => path.join(appDir(), 'next');
 
 const MAX_FAILED_BOOTS = 2;
 
+/**
+ * Папка для временных файлов. Системной может не быть или в неё нельзя писать
+ * (Android-приложение, Termux) — тогда используется папка внутри настроек программы.
+ */
+export function tempBase() {
+  const system = os.tmpdir();
+  try {
+    fs.accessSync(system, fs.constants.W_OK);
+    return system;
+  } catch {
+    const own = path.join(home(), 'tmp');
+    fs.mkdirSync(own, { recursive: true });
+    return own;
+  }
+}
+
 export function readState() {
   try { return JSON.parse(fs.readFileSync(stateFile(), 'utf8')); } catch { return {}; }
 }

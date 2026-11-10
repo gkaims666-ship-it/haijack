@@ -54,7 +54,7 @@ async function check(dir) {
     errors.push('нет startWeb (src/web/server.js) или buildConfig (src/config.js)');
     return errors;
   }
-  const cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'lcc-selfcheck-'));
+  const cwd = fs.mkdtempSync(path.join(workerData?.tmp || os.tmpdir(), 'lcc-selfcheck-'));
   let web;
   try {
     web = await server.startWeb({ cfg: config.buildConfig(cwd), port: 0 });
