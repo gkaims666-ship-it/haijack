@@ -14,6 +14,7 @@ export const PAGE = String.raw`<!doctype html>
 <meta name="color-scheme" content="dark">
 <meta name="theme-color" content="#0B0F14">
 <title>Local Claude Code</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 48 48'%3E%3Crect width='48' height='48' rx='11' fill='%230B0F14'/%3E%3Crect x='11' y='12' width='26' height='4.5' rx='2.2' fill='%23A78BFA'/%3E%3Crect x='11' y='19' width='19' height='4.5' rx='2.2' fill='%2334D3B6'/%3E%3Crect x='11' y='26' width='23' height='4.5' rx='2.2' fill='%23F2B45A'/%3E%3Crect x='11' y='33' width='14' height='4.5' rx='2.2' fill='%236AA8FF'/%3E%3C/svg%3E">
 <style>
 :root {
   --bg: #0B0F14; --panel: #111821; --raised: #18212D; --hover: #1E2937; --line: #232F3D; --line-strong: #32414F;
@@ -117,7 +118,8 @@ header { background: var(--panel); border-bottom: 1px solid var(--line); padding
 /* ---------- диалог ---------- */
 main { flex: 1; overflow-y: auto; overscroll-behavior: contain; }
 #log { padding-top: 18px; padding-bottom: 24px; }
-.empty { padding: 8vh 0 0; max-width: 46ch; }
+.empty { padding: 5vh 0 0; }
+.empty > p, .empty .starters { max-width: 52ch; }
 .empty h2 { margin: 0 0 8px; font-size: 22px; font-weight: 650; letter-spacing: -0.01em; }
 .empty p { margin: 0 0 18px; color: var(--muted); }
 .starters { display: grid; gap: 8px; }
@@ -130,7 +132,7 @@ main { flex: 1; overflow-y: auto; overscroll-behavior: contain; }
 .stage::before { content: ""; width: 8px; height: 8px; border-radius: 50%; background: var(--hue); box-shadow: 0 0 10px var(--hue); flex: none; }
 .stage::after { content: ""; flex: 1; height: 1px; background: var(--line); }
 .say { --hue: var(--solo); margin: 10px 0; }
-.say .who { font-size: 12.5px; font-weight: 600; color: var(--hue); margin-bottom: 2px; }
+.say .who { display: flex; align-items: center; font-size: 12.5px; font-weight: 600; color: var(--hue); margin-bottom: 4px; }
 .say .body { overflow-wrap: anywhere; }
 .say .body.raw { white-space: pre-wrap; }
 .md > :first-child { margin-top: 0; } .md > :last-child { margin-bottom: 0; }
@@ -180,6 +182,26 @@ main { flex: 1; overflow-y: auto; overscroll-behavior: contain; }
 .summary .acts { display: flex; gap: 8px; padding: 0 14px 14px; }
 .good { color: var(--ok); font-weight: 600; } .bad { color: var(--error); font-weight: 600; } .soft { color: var(--warn); font-weight: 600; }
 
+/* ---------- плитка агента, блок действий, подсветка кода ---------- */
+.tile { display: inline-grid; place-items: center; width: 20px; height: 20px; border-radius: 6px; margin-right: 8px; flex: none; font: 700 11px/1 var(--sans); color: var(--hue); background: var(--raised); background: color-mix(in srgb, var(--hue) 16%, transparent); box-shadow: inset 0 0 0 1px var(--line); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--hue) 35%, transparent); }
+.work { --hue: var(--muted); margin: 8px 0; border: 1px solid var(--line); border-radius: 10px; background: var(--panel); }
+.work > summary { list-style: none; cursor: pointer; display: flex; align-items: center; gap: 8px; padding: 8px 12px; color: var(--muted); font-size: 13px; user-select: none; }
+.work > summary::-webkit-details-marker { display: none; }
+.work > summary::before { content: ""; width: 6px; height: 6px; border-right: 1.5px solid var(--faint); border-bottom: 1.5px solid var(--faint); transform: rotate(-45deg); transition: transform .15s; flex: none; margin-right: 2px; }
+.work[open] > summary::before { transform: rotate(45deg); }
+.work > summary b { color: var(--hue); font-weight: 600; }
+.work > summary .names { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; font-family: var(--mono); font-size: 12.5px; color: var(--faint); }
+.work > summary .errs { color: var(--error); white-space: nowrap; }
+.work .inner { padding: 2px 12px 10px; border-top: 1px solid var(--line); }
+.tok-c { color: var(--faint); font-style: italic; } .tok-s { color: #9BE3C8; } .tok-n { color: var(--reviewer); } .tok-k { color: var(--architect); }
+.code pre .add, .msg.pre .add { color: var(--add); } .code pre .del, .msg.pre .del { color: var(--del); } .code pre .hunk, .msg.pre .hunk { color: var(--executor); } .msg.pre .file { color: var(--text); font-weight: 600; }
+.team { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin: 0 0 22px; }
+.team div { --hue: var(--muted); padding: 12px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--panel); border-top: 3px solid var(--hue); }
+.team b { display: block; color: var(--hue); font-weight: 650; margin-bottom: 2px; }
+.team span { color: var(--muted); font-size: 13px; line-height: 1.4; display: block; }
+.ended { position: fixed; inset: 0; z-index: 50; background: var(--bg); display: grid; place-items: center; text-align: center; padding: 24px; color: var(--muted); }
+.ended b { display: block; color: var(--text); font-size: 20px; margin-bottom: 6px; }
+
 /* ---------- ввод ---------- */
 footer { flex: none; padding-top: 8px; padding-bottom: max(10px, env(safe-area-inset-bottom)); }
 .composer { background: var(--panel); border: 1px solid var(--line-strong); border-radius: 16px; padding: 8px; transition: border-color .15s; }
@@ -189,8 +211,10 @@ footer { flex: none; padding-top: 8px; padding-bottom: max(10px, env(safe-area-i
 .file-chip { display: inline-flex; align-items: center; gap: 6px; padding: 3px 4px 3px 10px; border-radius: 8px; background: var(--raised); border: 1px solid var(--line); font: 12.5px/1.4 var(--mono); }
 .file-chip button { width: 22px; height: 22px; border-radius: 6px; color: var(--muted); }
 .file-chip button:hover { background: var(--hover); color: var(--text); }
-.tools-row { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
-.chip { display: inline-flex; align-items: center; gap: 6px; min-height: 34px; padding: 0 10px; border-radius: 9px; border: 1px solid var(--line); color: var(--muted); font-size: 13px; white-space: nowrap; transition: background .12s, color .12s, border-color .12s; }
+.tools-row { display: flex; align-items: center; gap: 6px; }
+.chips { display: flex; align-items: center; gap: 6px; flex: 1; min-width: 0; overflow-x: auto; scrollbar-width: none; padding: 1px; }
+.chips::-webkit-scrollbar { display: none; }
+.chip { display: inline-flex; align-items: center; gap: 6px; min-height: 34px; padding: 0 10px; flex: none; border-radius: 9px; border: 1px solid var(--line); color: var(--muted); font-size: 13px; white-space: nowrap; transition: background .12s, color .12s, border-color .12s; }
 .chip:hover { color: var(--text); border-color: var(--line-strong); }
 .chip[aria-pressed="true"] { color: var(--text); background: var(--raised); border-color: var(--line-strong); }
 .chip.self[aria-pressed="true"] { border-color: var(--architect); color: var(--architect); }
@@ -235,6 +259,7 @@ button.cat-item:hover { border-color: var(--line-strong); }
 .pull .line { display: flex; justify-content: space-between; gap: 12px; color: var(--muted); font-size: 13px; }
 .pull .row { display: flex; gap: 8px; margin-top: 10px; flex-wrap: wrap; }
 
+@media (max-width: 720px) { .team { grid-template-columns: repeat(2, 1fr); } }
 @media (max-width: 560px) {
   .project { display: none; }
   .btn.send span { display: none; }
@@ -308,7 +333,13 @@ button.cat-item:hover { border-color: var(--line-strong); }
 <main id="scroll"><div class="wrap" id="log" aria-live="polite">
   <div class="empty" id="empty">
     <h2>С чего начнём?</h2>
-    <p>Опишите задачу — агенты изучат проект, внесут изменения и продолжат работу, пока ревью и проверки не пройдут.</p>
+    <p>Опишите задачу. Над ней по очереди работают четыре агента и не останавливаются, пока ревью и проверки не пройдут.</p>
+    <div class="team">
+      <div style="--hue:var(--architect)"><b>Architect</b><span>Изучает проект и составляет план</span></div>
+      <div style="--hue:var(--coder)"><b>Coder</b><span>Пишет код и тесты к нему</span></div>
+      <div style="--hue:var(--reviewer)"><b>Reviewer</b><span>Проверяет каждое изменение</span></div>
+      <div style="--hue:var(--executor)"><b>Executor</b><span>Запускает сборку и тесты</span></div>
+    </div>
     <div class="starters" id="starters">
       <button type="button">Объясни, как устроен этот проект</button>
       <button type="button">Найди и исправь ошибки в коде, добавь недостающие тесты</button>
@@ -324,6 +355,7 @@ button.cat-item:hover { border-color: var(--line-strong); }
     <div class="tools-row">
       <button class="icon-btn" id="attach" title="Прикрепить файлы" aria-label="Прикрепить файлы"><svg viewBox="0 0 24 24"><path d="M19 11.5l-7.2 7.2a4.5 4.5 0 0 1-6.4-6.4l7.9-7.9a3 3 0 0 1 4.3 4.3l-7.8 7.8a1.5 1.5 0 0 1-2.1-2.1l6.8-6.8"/></svg></button>
       <input type="file" id="file-input" multiple hidden>
+      <div class="chips">
       <select class="chip" id="mode" aria-label="Режим работы">
         <option value="auto">Конвейер</option>
         <option value="plan">Сначала план</option>
@@ -332,7 +364,7 @@ button.cat-item:hover { border-color: var(--line-strong); }
       <button class="chip self" id="target" aria-pressed="false" title="Задачи будут менять код самого приложения: правки, самопроверка, установка новой версии без переустановки">Приложение</button>
       <button class="chip loop" id="loop" aria-pressed="false" title="Повторять задачу итерациями, пока вы её не остановите"><svg viewBox="0 0 24 24"><path d="M17 3l3 3-3 3M20 6H9a5 5 0 0 0-5 5M7 21l-3-3 3-3M4 18h11a5 5 0 0 0 5-5"/></svg>Непрерывно</button>
       <button class="chip" id="auto" aria-pressed="false" title="Не спрашивать перед записью файлов и запуском команд. Опасные команды всё равно потребуют подтверждения.">Без вопросов</button>
-      <span class="spacer"></span>
+      </div>
       <button class="btn primary send" id="send"><svg viewBox="0 0 24 24"><path d="M12 19V5M5.5 11.5L12 5l6.5 6.5"/></svg><span>Отправить</span></button>
       <button class="btn danger" id="stop" hidden>Остановить</button>
     </div>
@@ -382,6 +414,7 @@ button.cat-item:hover { border-color: var(--line-strong); }
 
     <h3>Приложение</h3>
     <pre class="block" id="s-about"></pre>
+    <button type="button" class="btn small" id="s-quit" style="margin-top:12px">Завершить работу программы</button>
     <div class="note error" id="s-error" role="alert" hidden></div>
   </div>
   <div class="sheet-foot"><button class="btn primary" id="s-save">Сохранить</button><span class="note" id="s-saved" style="margin:0" hidden>Сохранено</span></div>
@@ -434,6 +467,8 @@ button.cat-item:hover { border-color: var(--line-strong); }
   </div>
 </aside>
 
+<div class="ended" id="ended" hidden><div><b>Программа завершена</b>Это окно можно закрыть.</div></div>
+
 <div class="dialog" id="confirm" hidden role="alertdialog" aria-labelledby="c-title">
   <h2 id="c-title"></h2><p id="c-text"></p>
   <div class="row"><button class="btn" id="c-no">Отмена</button><button class="btn primary" id="c-yes"></button></div>
@@ -479,7 +514,10 @@ button.cat-item:hover { border-color: var(--line-strong); }
       return r.json().then(function (j) { if (!r.ok) throw new Error(j.error || ('Ошибка ' + r.status)); return j; });
     });
   }
-  function note(level, text) { add(el('div', 'msg ' + level, text)); }
+  function note(level, text) {
+    if (level === 'pre' && looksLikeDiff(text)) { var box = el('div', 'msg pre'); diffLines(box, text); add(box); return; }
+    add(el('div', 'msg ' + level, text));
+  }
   function showError(node, text) { node.textContent = text || ''; node.hidden = !text; }
   function copyText(text, button) {
     function done() { var old = button.textContent; button.textContent = 'Скопировано'; setTimeout(function () { button.textContent = old; }, 1400); }
@@ -513,6 +551,36 @@ button.cat-item:hover { border-color: var(--line-strong); }
     }
     if (last < text.length) parent.appendChild(document.createTextNode(text.slice(last)));
   }
+  // Строки diff: добавленные, удалённые, заголовки
+  function diffLines(parent, text) {
+    text.split('\n').forEach(function (line) {
+      var cls = line.indexOf('@@') === 0 ? 'hunk' : /^(\+\+\+|---) /.test(line) ? 'file' : line.charAt(0) === '+' ? 'add' : line.charAt(0) === '-' ? 'del' : '';
+      parent.appendChild(el('div', cls, line || ' '));
+    });
+  }
+  var looksLikeDiff = function (text) { return /^(--- |diff --git )/.test(text) || /\n@@ -\d+/.test(text); };
+  // Лёгкая подсветка: комментарии, строки, числа и ключевые слова. Без разбора грамматики — только раскраска.
+  var HASH_LANGS = /^(py|python|sh|bash|shell|zsh|yaml|yml|toml|rb|ruby|ini|conf|dockerfile|makefile|r|pl|perl|ps1|powershell)$/;
+  var PLAIN_LANGS = /^(|text|txt|plain|md|markdown|csv|log)$/;
+  var KEYWORDS = 'const|let|var|function|return|if|else|for|while|class|import|from|export|async|await|new|try|catch|throw|def|self|None|True|False|null|true|false|undefined|public|private|protected|static|void|int|float|bool|string|fn|use|struct|impl|package|func|type|interface|extends|implements|switch|case|break|continue|in|of|not|and|or|elif|with|as|lambda|yield|this|typeof|default|finally|do|pass|raise|except|match|enum|pub|mut|go|defer|select|then|fi|done|echo|local';
+  var COMMENT_SLASH = /\/\/[^\n]*|\/\*[\s\S]*?\*\//.source;
+  var COMMENT_HASH = /#[^\n]*/.source;
+  var STRING = /"(?:\\.|[^"\\\n])*"|'(?:\\.|[^'\\\n])*'|\x60(?:\\.|[^\x60\\])*\x60/.source;
+  var NUMBER = /\b\d+(?:\.\d+)?\b/.source;
+  function highlight(pre, code, lang) {
+    lang = (lang || '').toLowerCase();
+    if (lang === 'diff' || lang === 'patch' || (!lang && looksLikeDiff(code))) { diffLines(pre, code); return; }
+    if (PLAIN_LANGS.test(lang) || code.length > 30000) { pre.textContent = code; return; }
+    var re = new RegExp('(' + (HASH_LANGS.test(lang) ? COMMENT_HASH : COMMENT_SLASH) + ')|(' + STRING + ')|(' + NUMBER + ')|\\b(' + KEYWORDS + ')\\b', 'g');
+    var last = 0, m;
+    while ((m = re.exec(code)) !== null) {
+      if (m.index > last) pre.appendChild(document.createTextNode(code.slice(last, m.index)));
+      pre.appendChild(el('span', m[1] ? 'tok-c' : m[2] ? 'tok-s' : m[3] ? 'tok-n' : 'tok-k', m[0]));
+      last = m.index + m[0].length;
+      if (!m[0].length) re.lastIndex++;
+    }
+    if (last < code.length) pre.appendChild(document.createTextNode(code.slice(last)));
+  }
   function codeBlock(lang, code) {
     var box = el('div', 'code'), head = el('div', 'head');
     head.appendChild(el('span', '', lang || 'код'));
@@ -521,7 +589,9 @@ button.cat-item:hover { border-color: var(--line-strong); }
     copy.onclick = function () { copyText(code, copy); };
     head.appendChild(copy);
     box.appendChild(head);
-    box.appendChild(el('pre', '', code));
+    var pre = el('pre');
+    highlight(pre, code, lang);
+    box.appendChild(pre);
     return box;
   }
   function renderMarkdown(body, full) {
@@ -603,6 +673,39 @@ button.cat-item:hover { border-color: var(--line-strong); }
     thinkingEl.lastChild.textContent = text;
   }
 
+  // ---------- блок действий ----------
+  // Вызовы инструментов подряд собираются в один сворачиваемый блок, чтобы длинная задача
+  // не превращалась в сплошной поток служебных строк. Пока блок активен, он раскрыт.
+  var workEl = null, workInner = null, workNames = [], workCount = 0, workErrors = 0, workRole = null, workFirst = '';
+  var stageRole = null; // роль текущего этапа: под его заголовком имя агента не повторяется
+  function plural(n, one, few, many) {
+    var d = n % 10, h = n % 100;
+    return n + ' ' + (d === 1 && h !== 11 ? one : d >= 2 && d <= 4 && (h < 12 || h > 14) ? few : many);
+  }
+  function drawWorkSummary() {
+    var sum = workEl.firstChild;
+    sum.textContent = '';
+    sum.appendChild(el('b', '', plural(workCount, 'действие', 'действия', 'действий')));
+    // Одно действие показывается целиком, несколько — списком названий
+    sum.appendChild(el('span', 'names', workCount === 1 ? workFirst : workNames.join(', ')));
+    if (workErrors) sum.appendChild(el('span', 'errs', 'ошибок: ' + workErrors));
+  }
+  function openWork(role) {
+    if (workEl && workRole === role) return;
+    closeWork();
+    workEl = hue(el('details', 'work'), role); workEl.open = true;
+    workEl.appendChild(el('summary'));
+    workInner = el('div', 'inner'); workEl.appendChild(workInner);
+    workNames = []; workCount = 0; workErrors = 0; workRole = role;
+    add(workEl);
+  }
+  function closeWork() {
+    if (!workEl) return;
+    // Блок с ошибками остаётся раскрытым: на них стоит посмотреть
+    if (!workErrors) workEl.open = false;
+    workEl = null; workInner = null; workRole = null;
+  }
+
   // ---------- вопросы ----------
   function answer(id, value) { return api('POST', '/api/answer', { id: id, value: value }).catch(function (e) { note('error', e.message); }); }
   function drawAsk(ev) {
@@ -655,6 +758,7 @@ button.cat-item:hover { border-color: var(--line-strong); }
     while (log.lastChild && log.lastChild !== $('empty')) log.removeChild(log.lastChild);
     $('empty').hidden = false;
     toolEl = null; outEl = null; thinkingEl = null; asks = {}; visited = {}; activeRole = null;
+    workEl = null; workInner = null; workRole = null; stageRole = null;
     drawRelay();
   }
   function applyState(ev) {
@@ -704,11 +808,11 @@ button.cat-item:hover { border-color: var(--line-strong); }
       case 'reset': resetLog(); break;
       case 'pull': drawPull(ev); break;
       case 'user':
-        endSay(); visited = {}; activeRole = null; drawRelay();
+        endSay(); closeWork(); visited = {}; activeRole = null; stageRole = null; drawRelay();
         add(el('div', 'user', ev.text)); toBottom();
         break;
       case 'stage':
-        endSay(); setActive(ev.role);
+        endSay(); closeWork(); setActive(ev.role); stageRole = ev.role;
         var st = hue(el('div', 'stage'), ev.role);
         st.appendChild(el('b', '', ev.label)); st.appendChild(el('span', '', ev.desc));
         add(st);
@@ -718,9 +822,14 @@ button.cat-item:hover { border-color: var(--line-strong); }
       case 'text':
         setActive(ev.role);
         if (!sayEl || sayRole !== ev.role) {
-          endSay();
+          endSay(); closeWork();
           sayEl = hue(el('div', 'say'), ev.role);
-          sayEl.appendChild(el('div', 'who', ev.label));
+          if (ev.role !== stageRole) {
+            var who = el('div', 'who');
+            who.appendChild(el('span', 'tile', ev.label.charAt(0)));
+            who.appendChild(document.createTextNode(ev.label));
+            sayEl.appendChild(who);
+          }
           var body = el('div', 'body raw');
           sayText = document.createTextNode('');
           body.appendChild(sayText);
@@ -733,12 +842,16 @@ button.cat-item:hover { border-color: var(--line-strong); }
       case 'textEnd': keepBottom(endSay); break;
       case 'tool':
         endSay(); setActive(ev.role);
+        openWork(ev.role);
         toolEl = hue(el('div', 'tool'), ev.role); outEl = null;
         var call = el('div', 'call');
         call.appendChild(el('span', 'name', ev.name));
         call.appendChild(document.createTextNode('(' + ev.arg + ')'));
         toolEl.appendChild(call);
-        add(toolEl);
+        workCount++;
+        if (workCount === 1) workFirst = ev.name + '(' + ev.arg + ')';
+        if (workNames.indexOf(ev.name) === -1) workNames.push(ev.name);
+        keepBottom(function () { workInner.appendChild(toolEl); drawWorkSummary(); });
         break;
       case 'cmd':
         if (ev.shell || !toolEl) { if (!outEl || outEl.parentNode !== log) { outEl = el('div', 'out'); outEl.style.marginLeft = '0'; add(outEl); } }
@@ -747,12 +860,13 @@ button.cat-item:hover { border-color: var(--line-strong); }
         break;
       case 'toolResult':
         if (toolEl) keepBottom(function () { toolEl.appendChild(el('div', 'res ' + ev.tone, '└ ' + ev.text)); });
+        if (workEl && ev.tone === 'error') { workErrors++; drawWorkSummary(); }
         toolEl = null; outEl = null;
         break;
       case 'ask': endSay(); setThinking(null); drawAsk(ev); break;
       case 'askDone': closeAsk(ev); break;
-      case 'msg': endSay(); toolEl = null; outEl = null; note(ev.level, ev.text); break;
-      case 'summary': endSay(); drawSummary(ev); break;
+      case 'msg': endSay(); closeWork(); toolEl = null; outEl = null; note(ev.level, ev.text); break;
+      case 'summary': endSay(); closeWork(); stageRole = null; drawSummary(ev); break;
     }
   }
 
@@ -1064,6 +1178,7 @@ button.cat-item:hover { border-color: var(--line-strong); }
         urls.appendChild(copy);
       });
       $('s-about').textContent = 'Версия ' + s.version + ', ' + s.platform + '\n' + s.self;
+      $('s-quit').hidden = !!s.isAndroidApp;
       show($('settings'));
     }).catch(function (e) { note('error', e.message); });
   };
@@ -1091,6 +1206,13 @@ button.cat-item:hover { border-color: var(--line-strong); }
       settings = r; $('s-saved').hidden = false; $('s-saved').textContent = r.restart ? 'Сохранено, перезапуск…' : 'Сохранено';
       if (!r.restart) setTimeout(closeSheet, 500);
     }).catch(function (e) { showError($('s-error'), e.message); }).then(function () { $('s-save').disabled = false; });
+  };
+
+  $('s-quit').onclick = function () {
+    confirmBox('Завершить работу программы?', 'Текущая задача будет остановлена. Диалог и память сохранятся.', 'Завершить', function () {
+      api('POST', '/api/quit', {}).then(function () { $('ended').hidden = false; try { window.close(); } catch (e) { /* вкладку закроет пользователь */ } },
+        function (e) { note('error', e.message); });
+    });
   };
 
   // ---------- память ----------

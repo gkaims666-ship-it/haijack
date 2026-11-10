@@ -80,7 +80,7 @@ export function scenario(rawSystem, messages) {
   return [[text('solo ok')], 'end_turn'];
 }
 
-export function startMock() {
+export function startMock({ host = '127.0.0.1', port = 0 } = {}) {
   const requests = [];
   const server = http.createServer((req, res) => {
     let body = '';
@@ -98,7 +98,7 @@ export function startMock() {
     });
   });
   return new Promise((resolve) => {
-    server.listen(0, '127.0.0.1', () => resolve({ server, requests, url: `http://127.0.0.1:${server.address().port}` }));
+    server.listen(port, host, () => resolve({ server, requests, url: `http://127.0.0.1:${server.address().port}` }));
   });
 }
 
