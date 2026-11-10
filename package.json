@@ -1,6 +1,6 @@
 {
   "name": "local-claude-code",
-  "version": "1.3.0",
+  "version": "1.4.0",
   "description": "Cross-platform (Windows / Android Termux / Linux / macOS) terminal AI coding assistant with a 4-agent pipeline. Zero dependencies.",
   "type": "module",
   "bin": {

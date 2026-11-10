@@ -3,7 +3,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import readline from 'node:readline';
-import { loadEnv, buildConfig, hasCredentials, interactiveSetup } from './config.js';
+import { loadEnv, buildConfig, hasCredentials, interactiveSetup, CONFIG_DIR } from './config.js';
 import { ModelClient } from './api/index.js';
 import { Memory } from './memory.js';
 import { checkLocalServer } from './api/openai.js';
@@ -14,6 +14,8 @@ import { Session, MODES } from './session.js';
 import { Usage } from './usage.js';
 import { c } from './ui/term.js';
 import { VERSION } from './version.js';
+import { spawn } from 'node:child_process';
+import { platformInfo } from './platform.js';
 
 const USAGE = `
 Local Claude Code v${VERSION} — терминальный ИИ-ассистент с 4 агентами
@@ -75,6 +77,23 @@ export function parseArgs(argv) {
   return o;
 }
 
+/** Открывает адрес в браузере по умолчанию. Не получилось — не страшно: ссылка уже напечатана. */
+function openBrowser(url) {
+  const info = platformInfo();
+  if (info.isTermux || info.isAndroidApp) return;
+  let cmd;
+  let cmdArgs;
+  if (process.platform === 'win32') { cmd = 'cmd'; cmdArgs = ['/c', 'start', '', url]; }
+  else if (process.platform === 'darwin') { cmd = 'open'; cmdArgs = [url]; }
+  else if (process.env.DISPLAY || process.env.WAYLAND_DISPLAY) { cmd = 'xdg-open'; cmdArgs = [url]; }
+  else return;
+  try {
+    const child = spawn(cmd, cmdArgs, { stdio: 'ignore', detached: true, windowsHide: true });
+    child.on('error', () => {});
+    child.unref();
+  } catch { /* браузер не открылся — пользователь откроет ссылку сам */ }
+}
+
 const RESTART = 75; // код для загрузчика: установлена новая версия кода, запустить её в этом же процессе
 
 /**
@@ -130,6 +149,8 @@ export async function main(argv = process.argv.slice(2), boot = {}) {
     console.log(`Local Claude Code v${VERSION} — веб-интерфейс запущен.`);
     for (const url of web.urls) console.log(`  ${url}`);
     console.log('Ссылка содержит ключ доступа — не передавайте её другим. Ctrl+C — остановить.');
+    // При обычном запуске с компьютера открываем интерфейс сами; после перезапуска страница уже открыта
+    if (!process.env.LCC_WEB_TOKEN && !process.env.LCC_NO_OPEN && process.stdout.isTTY) openBrowser(web.url);
     const stop = () => web.close();
     process.on('uncaughtException', logError);
     process.on('unhandledRejection', logError);
@@ -171,7 +192,9 @@ export async function main(argv = process.argv.slice(2), boot = {}) {
   const memory = new Memory();
   const client = new ModelClient(cfg);
   const renderer = new Renderer({ cfg, question: async () => 'n' });
-  const orchestrator = new Orchestrator({ client, cfg, ui: renderer, usage, memory });
+  // В интерактивном режиме диалог с ассистентом сохраняется и продолжается после перезапуска
+  const dialogFile = args.print ? undefined : path.join(CONFIG_DIR, 'session', 'solo.json');
+  const orchestrator = new Orchestrator({ client, cfg, ui: renderer, usage, memory, dialogFile });
   const session = new Session({ cfg, orchestrator, usage, ui: renderer, mode: args.mode, memory });
   bootOk();
 

@@ -78,7 +78,9 @@ export async function startWeb({ cfg, mode, port = 0, host = '127.0.0.1', token,
   const usage = new Usage();
   const memory = new Memory();
   const client = new ModelClient(cfg);
-  const orchestrator = new Orchestrator({ client, cfg, ui, usage, memory });
+  // Диалог с ассистентом (режим «Один агент») тоже переживает перезапуск
+  const dialogFile = persist ? path.join(CONFIG_DIR, 'session', 'solo.json') : undefined;
+  const orchestrator = new Orchestrator({ client, cfg, ui, usage, memory, dialogFile });
   const session = new Session({ cfg, orchestrator, usage, ui, mode, memory });
   session.onClear = () => hub.clear();
   const secret = token || crypto.randomBytes(24).toString('hex');
@@ -167,6 +169,7 @@ export async function startWeb({ cfg, mode, port = 0, host = '127.0.0.1', token,
   // ---------- настройки ----------
   const settingsView = () => ({
     version: VERSION,
+    cwd: cfg.cwd,
     provider: cfg.provider,
     model: cfg.model,
     models: cfg.models,
@@ -290,6 +293,8 @@ export async function startWeb({ cfg, mode, port = 0, host = '127.0.0.1', token,
           }
           case '/api/settings':
             return send(res, 200, settingsView());
+          case '/api/state':
+            return send(res, 200, snapshot());
           case '/api/models': {
             // Модели, установленные на локальном сервере (адрес можно проверить до сохранения)
             const base = cleanUrl(url.searchParams.get('url') || cfg.local.baseUrl);
@@ -301,7 +306,10 @@ export async function startWeb({ cfg, mode, port = 0, host = '127.0.0.1', token,
             // Каталог Hugging Face: все общедоступные модели в формате GGUF, по запросу и страницами
             return send(res, 200, await searchModels(url.searchParams.get('q') || '', { cursor: url.searchParams.get('cursor') || '', signal: AbortSignal.timeout(15000) }));
           case '/api/hf/files':
-            return send(res, 200, { variants: await modelVariants(url.searchParams.get('repo') || '', { signal: AbortSignal.timeout(15000) }) });
+          {
+            const variants = await modelVariants(url.searchParams.get('repo') || '', { signal: AbortSignal.timeout(15000) });
+            return send(res, 200, { variants, gated: variants.gated });
+          }
           case '/api/memory':
             return send(res, 200, { memory: memory.read(), journal: formatJournal(memory.recent(20)), enabled: cfg.memory });
           default:

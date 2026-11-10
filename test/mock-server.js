@@ -42,6 +42,17 @@ export function scenario(rawSystem, messages) {
 
   if (system.includes('долговременную память')) return [[text('## Тестовый проект\n- hello.js печатает приветствие; проверка: node hello.js')], 'end_turn'];
   if (system.includes('Ответь одним словом')) return [[text('pong')], 'end_turn'];
+  // Сценарий самоулучшения (test/e2e.mjs): агенты добавляют отметку в код самого приложения
+  if (textOf(messages[0].content).includes('SELFTEST')) {
+    if (system.includes('Agent-Architect')) return [[text('РЕЖИМ: ИЗМЕНЕНИЯ\n## Шаги\n1. Добавить константу SELFTEST_MARK в src/usage.js')], 'end_turn'];
+    if (system.includes('Agent-Coder')) {
+      if (n === 1) return [[tool('s1', 'read_file', { path: 'src/usage.js' })], 'tool_use'];
+      if (n === 3) return [[tool('s2', 'edit_file', { path: 'src/usage.js', old_string: 'export class Usage {', new_string: "export const SELFTEST_MARK = 'ok';\nexport class Usage {" })], 'tool_use'];
+      return [[text('Константа добавлена.')], 'end_turn'];
+    }
+    if (system.includes('Agent-Reviewer')) return [[text('Изменение соответствует задаче.\nВЕРДИКТ: OK')], 'end_turn'];
+    if (system.includes('Agent-Executor')) return [[text('Отдельная проверка не требуется.\nСТАТУС: SKIP')], 'end_turn'];
+  }
   if (system.includes('Agent-Architect')) {
     if (lastText.includes('ВОПРОС')) return [[text('РЕЖИМ: ОТВЕТ\nЭто ответ на вопрос.')], 'end_turn'];
     if (n === 1) return [[tool('t1', 'list_dir', { path: '.' })], 'tool_use'];

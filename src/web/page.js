@@ -366,6 +366,8 @@ button.cat-item:hover { border-color: var(--line-strong); }
     </div>
 
     <h3>Работа</h3>
+    <label class="field"><span>Папка проекта</span><input class="input" id="s-cwd" type="text" autocapitalize="off" spellcheck="false">
+      <small>В этой папке агенты читают и меняют файлы.</small></label>
     <label class="field"><span>Заходов на задачу</span><input class="input" id="s-cycles" type="number" min="0" max="1000" inputmode="numeric">
       <small>Если после захода остались замечания или упавшие проверки, работа начинается заново. 0 — без ограничения: задача выполняется, пока не будет готова или пока вы её не остановите.</small></label>
     <label class="switch"><input type="checkbox" id="s-memory"><span><b>Долговременная память</b><small>После каждой задачи программа записывает, что стоит помнить. Память сохраняется при очистке диалога и перезапуске.</small></span></label>
@@ -425,6 +427,7 @@ button.cat-item:hover { border-color: var(--line-strong); }
       <button type="button" class="btn small quiet cat-back" id="cat-back">← К поиску</button>
       <p class="cat-repo" id="cat-repo"></p>
       <p class="note">Чем больше файл, тем точнее модель и тем больше памяти ей нужно. Модель должна целиком помещаться в память видеокарты или компьютера.</p>
+      <div class="note" id="cat-gated" style="color:var(--warn)" hidden>Автор этой модели требует принять условия на её странице на Hugging Face. Пока они не приняты в вашей учётной записи, загрузка не начнётся.</div>
       <div class="note error" id="cat-files-error" role="alert" hidden></div>
       <div class="cat-list" id="cat-files"></div>
     </div>
@@ -920,10 +923,11 @@ button.cat-item:hover { border-color: var(--line-strong); }
   function openRepo(repo) {
     $('cat-search-view').hidden = true; $('cat-files-view').hidden = false;
     $('cat-repo').textContent = repo;
-    showError($('cat-files-error'), '');
+    showError($('cat-files-error'), ''); $('cat-gated').hidden = true;
     $('cat-files').textContent = ''; $('cat-files').appendChild(el('div', 'note', 'Загружаю список вариантов…'));
     api('GET', '/api/hf/files?repo=' + encodeURIComponent(repo)).then(function (r) {
       $('cat-files').textContent = '';
+      $('cat-gated').hidden = !r.gated;
       if (!r.variants.length) { $('cat-files').appendChild(el('div', 'note', 'В этом репозитории нет файлов GGUF.')); return; }
       r.variants.forEach(function (v) {
         var row = el('div', 'cat-item');
@@ -1045,6 +1049,7 @@ button.cat-item:hover { border-color: var(--line-strong); }
       $('s-effort').value = s.effort || '';
       $('s-local').value = s.local.baseUrl || '';
       fillModels($('s-model-l'), s.provider === 'local' && s.model ? [s.model] : [], s.model);
+      $('s-cwd').value = s.cwd || '';
       $('s-cycles').value = s.maxCycles;
       $('s-memory').checked = !!s.memory;
       $('s-lan').checked = !!s.lan;
@@ -1079,7 +1084,10 @@ button.cat-item:hover { border-color: var(--line-strong); }
       if ($('s-model-a').value.trim() !== (settings.provider === 'local' ? '' : settings.model)) body.model = $('s-model-a').value.trim();
     }
     showError($('s-error'), ''); $('s-save').disabled = true;
+    var newCwd = $('s-cwd').value.trim();
+    var changeCwd = newCwd && newCwd !== settings.cwd;
     api('POST', '/api/settings', body).then(function (r) {
+      if (changeCwd && !r.restart) sendText('/cd ' + newCwd);
       settings = r; $('s-saved').hidden = false; $('s-saved').textContent = r.restart ? 'Сохранено, перезапуск…' : 'Сохранено';
       if (!r.restart) setTimeout(closeSheet, 500);
     }).catch(function (e) { showError($('s-error'), e.message); }).then(function () { $('s-save').disabled = false; });
