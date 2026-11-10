@@ -35,7 +35,8 @@ const tool = (id, name, input) => ({ type: 'tool_use', id, name, input });
 const textOf = (v) => (typeof v === 'string' ? v : Array.isArray(v) ? v.map((b) => b.text ?? b.content ?? '').join('') : '');
 
 export function scenario(rawSystem, messages) {
-  const system = textOf(rawSystem);
+  // Короткие инструкции для локальных моделей называют роль иначе — приводим к одному виду
+  const system = textOf(rawSystem).replace(/Role: (Architect|Coder|Reviewer|Executor)/, 'Agent-$1');
   const n = messages.length; // 1 = первый вызов, 3 = после первого tool_result, ...
   const lastUser = messages[n - 1];
   const lastText = textOf(lastUser.content);
@@ -155,12 +156,56 @@ function fromOpenAI(messages) {
   return { system, messages: rest };
 }
 
-export function startOpenAIMock({ style = 'native', installed = ['main-model', 'small-model'], failing = [], hanging = [] } = {}) {
+/** Поток собственного API Ollama: строки JSON, вызовы инструментов целиком, аргументы объектом */
+function ollamaStream(res, blocks, style) {
+  res.writeHead(200, { 'content-type': 'application/x-ndjson' });
+  const line = (message, extra = {}) => res.write(`${JSON.stringify({ model: 'm', message: { role: 'assistant', content: '', ...message }, done: false, ...extra })}\n`);
+  const texts = blocks.filter((b) => b.type === 'text');
+  const tools = blocks.filter((b) => b.type === 'tool_use');
+  if (style === 'text') {
+    let out = '<think>\nНадо подумать, что делать дальше.\n</think>\n\n' + texts.map((b) => b.text).join('');
+    for (const t of tools) out += `\n<tool_call>\n${JSON.stringify({ name: t.name, arguments: t.input })}\n</tool_call>`;
+    for (let i = 0; i < out.length; i += 5) line({ content: out.slice(i, i + 5) });
+  } else {
+    line({ thinking: 'размышления отдельным полем' });
+    for (const b of texts) for (let i = 0; i < b.text.length; i += 7) line({ content: b.text.slice(i, i + 7) });
+    if (tools.length) line({ tool_calls: tools.map((t) => ({ function: { name: t.name, arguments: t.input } })) });
+  }
+  res.write(`${JSON.stringify({ model: 'm', message: { role: 'assistant', content: '' }, done: true, done_reason: 'stop', prompt_eval_count: 11, eval_count: 7 })}\n`);
+  res.end();
+}
+
+/** Сообщения собственного API Ollama -> формат, который понимает scenario() */
+function fromOllama(messages) {
+  let n = 0;
+  return fromOpenAI(messages.map((m) => {
+    if (m.role === 'assistant' && m.tool_calls) return { ...m, tool_calls: m.tool_calls.map((c) => ({ id: `o${n++}`, function: c.function })) };
+    if (m.role === 'tool') return { ...m, tool_call_id: `o${n - 1}` };
+    return m;
+  }));
+}
+
+/**
+ * ollama: true — сервер ведёт себя как Ollama (свой API /api/chat, /api/tags, /api/ps, /api/pull);
+ * false — как сторонний сервер только с OpenAI-совместимым API (LM Studio, llama.cpp).
+ * cpuShare — какая доля модели «не поместилась в видеопамять» (для /api/ps).
+ */
+export function startOpenAIMock({ style = 'native', installed = ['main-model', 'small-model'], failing = [], hanging = [], ollama = true, cpuShare = 0, delayMs = 0, noTools = false } = {}) {
   const requests = [];
   const pulls = [];
   installed = [...installed];
   const server = http.createServer((req, res) => {
     const url = new URL(req.url, 'http://local');
+    if (!ollama && url.pathname.startsWith('/api/')) { res.writeHead(404); return res.end('404 page not found'); }
+    if (req.method === 'GET' && url.pathname === '/api/version') {
+      res.writeHead(200, { 'content-type': 'application/json' });
+      return res.end(JSON.stringify({ version: '0.99.0' }));
+    }
+    if (req.method === 'GET' && url.pathname === '/api/ps') {
+      res.writeHead(200, { 'content-type': 'application/json' });
+      const size = 20 * 2 ** 30;
+      return res.end(JSON.stringify({ models: installed.map((name) => ({ name, model: name, size, size_vram: Math.round(size * (1 - cpuShare)) })) }));
+    }
     if (req.method === 'GET' && url.pathname === '/api/tags') {
       res.writeHead(200, { 'content-type': 'application/json' });
       return res.end(JSON.stringify({ models: installed.map((name) => ({ name })) }));
@@ -198,15 +243,29 @@ export function startOpenAIMock({ style = 'native', installed = ['main-model', '
         };
         return tick();
       }
-      requests.push({ headers: req.headers, body: json });
+      requests.push({ headers: req.headers, body: json, path: url.pathname });
       if (hanging.includes(json.model)) return; // не отвечаем: клиент должен сработать по таймауту
+      const native = url.pathname === '/api/chat';
       if (failing.includes(json.model)) {
+        const message = 'model requires more system memory (20.1 GiB) than is available (7.6 GiB)';
         res.writeHead(500, { 'content-type': 'application/json' });
-        return res.end(JSON.stringify({ error: { message: 'model requires more system memory (20.1 GiB) than is available (7.6 GiB)' } }));
+        return res.end(JSON.stringify(native ? { error: message } : { error: { message } }));
       }
-      const { system, messages } = fromOpenAI(json.messages);
+      if (!installed.includes(json.model)) {
+        res.writeHead(404, { 'content-type': 'application/json' });
+        return res.end(JSON.stringify(native ? { error: `model '${json.model}' not found` } : { error: { message: `model '${json.model}' not found` } }));
+      }
+      if (noTools && json.tools) {
+        // Модель, шаблон которой не поддерживает встроенный вызов инструментов
+        res.writeHead(400, { 'content-type': 'application/json' });
+        const message = `registry.ollama.ai/library/${json.model} does not support tools`;
+        return res.end(JSON.stringify(native ? { error: message } : { error: { message } }));
+      }
+      const { system, messages } = native ? fromOllama(json.messages) : fromOpenAI(json.messages);
       const [blocks, stop] = scenario(system, messages);
-      return openAiSse(res, blocks, stop, style);
+      const kind = noTools ? 'text' : style; // такая модель может вызвать инструмент только текстом
+      const reply = () => (native ? ollamaStream(res, blocks, kind) : openAiSse(res, blocks, stop, kind));
+      return delayMs ? setTimeout(reply, delayMs) : reply(); // delayMs — модель «думает» перед первым словом
     });
   });
   return new Promise((resolve) => {

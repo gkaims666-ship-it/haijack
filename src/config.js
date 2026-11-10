@@ -80,8 +80,11 @@ export function buildConfig(cwd) {
       apiKey: env.LCC_LOCAL_KEY || env.LOCAL_LLM_API_KEY || env.OPENAI_API_KEY || '',
       // Запасная модель: на неё клиент переходит при сбое основной (нет соединения, таймаут, нехватка памяти)
       fallbackModel: env.LCC_LOCAL_FALLBACK_MODEL || env.LOCAL_LLM_FALLBACK_MODEL || '',
-      numCtx: num(env.LCC_LOCAL_NUM_CTX || env.LOCAL_LLM_NUM_CTX, 32768),
-      timeoutMs: num(env.LCC_LOCAL_TIMEOUT || env.LOCAL_LLM_TIMEOUT, 180000), // без данных от модели дольше этого — сбой
+      // Размер контекста в токенах. Больше — модель помнит больше кода, но занимает больше памяти
+      numCtx: num(env.LCC_LOCAL_NUM_CTX || env.LOCAL_LLM_NUM_CTX, 16384),
+      timeoutMs: num(env.LCC_LOCAL_TIMEOUT || env.LOCAL_LLM_TIMEOUT, 180000), // молчание посреди ответа дольше этого — сбой
+      // Ожидание первого ответа: модель загружается в память и читает запрос — это бывает долго
+      firstTimeoutMs: num(env.LCC_LOCAL_FIRST_TIMEOUT || env.LOCAL_LLM_FIRST_TIMEOUT, 15 * 60 * 1000),
     },
     apiKey: env.ANTHROPIC_API_KEY || '',
     authToken: env.ANTHROPIC_AUTH_TOKEN || '', // Bearer для прокси/кастомных шлюзов

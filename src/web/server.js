@@ -15,7 +15,7 @@ import { EventHub, WebRenderer } from './hub.js';
 import { Session, MODES, TARGETS } from '../session.js';
 import { hasCredentials, saveSettings, refreshConfig, CONFIG_DIR } from '../config.js';
 import { ModelClient, OpenAIClient } from '../api/index.js';
-import { checkLocalServer, pullModel, MODEL_NAME } from '../api/openai.js';
+import { checkLocalServer, pullModel, ollamaLoadWarning, MODEL_NAME } from '../api/openai.js';
 import { searchModels, modelVariants } from '../api/huggingface.js';
 import { Orchestrator } from '../agents/orchestrator.js';
 import { Memory, formatJournal } from '../memory.js';
@@ -200,7 +200,7 @@ export async function startWeb({ cfg, mode, port = 0, host = '127.0.0.1', token,
     model: cfg.model,
     models: cfg.models,
     anthropic: { hasKey: Boolean(cfg.apiKey || cfg.authToken), baseUrl: cfg.baseUrl },
-    local: { baseUrl: cfg.local.baseUrl, hasKey: Boolean(cfg.local.apiKey) },
+    local: { baseUrl: cfg.local.baseUrl, hasKey: Boolean(cfg.local.apiKey), numCtx: cfg.local.numCtx },
     effort: cfg.effort,
     maxCycles: cfg.maxCycles,
     memory: cfg.memory,
@@ -233,6 +233,11 @@ export async function startWeb({ cfg, mode, port = 0, host = '127.0.0.1', token,
       updates.LCC_LOCAL_URL = url;
     }
     if (body.localKey !== undefined) updates.LCC_LOCAL_KEY = String(body.localKey).trim();
+    if (body.numCtx !== undefined) {
+      const n = Number(body.numCtx);
+      if (!Number.isInteger(n) || n < 2048 || n > 1048576) throw new Error('Размер контекста — целое число от 2048 до 1048576');
+      updates.LCC_LOCAL_NUM_CTX = String(n);
+    }
     if (body.model !== undefined) {
       updates.LCC_MODEL = String(body.model).trim();
       // Единая модель заменяет прежние настройки по ролям
@@ -411,7 +416,13 @@ export async function startWeb({ cfg, mode, port = 0, host = '127.0.0.1', token,
               const health = await checkLocalServer(cfg.local, cfg.model);
               if (!health.ok) return send(res, 200, { ok: false, error: health.problem });
             }
-            await client.complete({ model: cfg.model, system: 'Ответь одним словом.', prompt: 'ping', maxTokens: 256, signal: AbortSignal.timeout(60000) });
+            // Локальной модели нужно время, чтобы загрузиться в память при первом обращении
+            await client.complete({ model: cfg.model, system: 'Ответь одним словом.', prompt: 'ping', maxTokens: 256, signal: AbortSignal.timeout(cfg.provider === 'local' ? 10 * 60 * 1000 : 60000) });
+            if (cfg.provider === 'local') {
+              // Сразу предупреждаем, если модель не помещается в видеопамять: иначе это выглядит как зависание
+              const slow = await ollamaLoadWarning(cfg.local, cfg.model);
+              if (slow) hub.emit({ t: 'msg', level: 'warn', text: slow });
+            }
             return send(res, 200, { ok: true });
           } catch (err) {
             return send(res, 200, { ok: false, error: err.message });

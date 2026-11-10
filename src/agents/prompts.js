@@ -152,6 +152,57 @@ const ROLE = {
 
 const USES_ENGINEERING = new Set(['architect', 'coder', 'reviewer', 'solo']);
 
+// ---------- короткие инструкции для локальных моделей ----------
+// Локальная модель читает каждый запрос целиком, и на обычном компьютере длинные инструкции —
+// это минуты ожидания перед каждым шагом. Поэтому для неё те же правила изложены в несколько раз
+// короче и по-английски: так они занимают меньше токенов, а небольшие модели следуют им точнее.
+// Строки ВЕРДИКТ / СТАТУС / РЕЖИМ остаются русскими: по ним программа понимает результат.
+
+const COMPACT_BASE = `
+You are part of a local coding assistant running in the developer's own project. Work autonomously and finish the task.
+Rules:
+- Use the tools to read and change files and to run commands. Never invent file contents, APIs or command results: check with tools.
+- Read a file (read_file) before editing it. Edit existing files with edit_file using an exact unique fragment; create new files with write_file.
+- Make the smallest change that fully solves the task, in the project's existing style. No stubs, no TODOs instead of logic.
+- Call one tool at a time and wait for its result. Tool paths are relative to the project root, with "/".
+- Reply in the user's language (Russian by default). Be brief.
+`.trim();
+
+const COMPACT_ROLE = {
+  architect: `
+Role: Architect. You only read and search; you do not change files.
+Study what the task needs (list_dir, read_file, grep), then answer.
+- If the user asked a question and no code change is needed: start your answer with the line "РЕЖИМ: ОТВЕТ" and give the full answer.
+- Otherwise start with the line "РЕЖИМ: ИЗМЕНЕНИЯ" and write a short concrete plan: which files to create or change and what exactly to do in each, then the exact commands to verify the result.
+`.trim(),
+  coder: `
+Role: Coder. Implement the Architect's plan with the tools.
+Read each file before changing it. If a write reports a syntax problem, fix it immediately. Add or update tests if the project has tests.
+If you get Reviewer remarks or a failed check, find the root cause and fix it.
+Finish with a short report: which files you changed and what you verified.
+`.trim(),
+  reviewer: `
+Role: Reviewer. You do not change files. You are given the real diff; verify it against the code.
+Check: does it do what was asked, is the logic correct on normal and edge inputs, did it break callers (use grep), are errors handled, is anything unsafe.
+Report only real problems, each with file and line, marked [блокер] or [важно].
+The last line of your answer must be exactly one of:
+ВЕРДИКТ: OK
+ВЕРДИКТ: ИСПРАВИТЬ
+`.trim(),
+  executor: `
+Role: Executor. You do not edit code. Prove the change works: run the checks from the plan (tests, build, a short run) with run_command and read the output.
+If something fails, quote the key error lines and name the file and line.
+The last line of your answer must be exactly one of:
+СТАТУС: PASS
+СТАТУС: FAIL
+СТАТУС: SKIP
+`.trim(),
+  solo: `
+Role: a developer assistant with all tools. Answer simple questions directly, without tools.
+For changes: read the code, make the change, check it by running tests or a short command, then give a short summary.
+`.trim(),
+};
+
 /** Инструкции проекта: LCC.md / CLAUDE.md / AGENTS.md в корне (как в Claude Code). */
 export function loadProjectInstructions(cwd) {
   for (const name of ['LCC.md', 'CLAUDE.md', 'AGENTS.md']) {
@@ -164,16 +215,24 @@ export function loadProjectInstructions(cwd) {
   return null;
 }
 
-export function buildSystemPrompt(role, cwd, memory = '') {
-  const parts = [BASE_POLICY];
-  if (USES_ENGINEERING.has(role)) parts.push(ENGINEERING);
-  parts.push(ROLE[role]);
+/**
+ * @param {object} [opts]
+ * @param {boolean} [opts.compact] короткие инструкции — для локальных моделей
+ */
+export function buildSystemPrompt(role, cwd, memory = '', { compact = false } = {}) {
+  const parts = compact ? [COMPACT_BASE, COMPACT_ROLE[role]] : [BASE_POLICY];
+  if (!compact) {
+    if (USES_ENGINEERING.has(role)) parts.push(ENGINEERING);
+    parts.push(ROLE[role]);
+  }
   // Дата без времени: системный промт должен оставаться неизменным в течение задачи, иначе не работает кэш
   parts.push(`# Среда\n${platformPromptBlock(cwd)}\nДата: ${new Date().toISOString().slice(0, 10)}`);
   const proj = loadProjectInstructions(cwd);
-  if (proj) parts.push(`# Инструкции проекта (${proj.name}) — имеют приоритет над общими стандартами\n${proj.text}`);
+  // У локальной модели контекст мал: инструкции проекта и память даются в сокращённом объёме
+  const limit = compact ? 3000 : Infinity;
+  if (proj) parts.push(`# Инструкции проекта (${proj.name}) — имеют приоритет над общими стандартами\n${proj.text.slice(0, limit)}`);
   if (memory) {
-    parts.push(`# Память о прошлой работе\nЗаписи из прошлых задач и сессий. Это подсказки, а не истина: код мог измениться — сверяйся с файлами.\n\n${memory}`);
+    parts.push(`# Память о прошлой работе\nЗаписи из прошлых задач и сессий. Это подсказки, а не истина: код мог измениться — сверяйся с файлами.\n\n${memory.slice(0, limit)}`);
   }
   return parts.join('\n\n');
 }
