@@ -72,5 +72,8 @@ export async function modelVariants(repo, { signal } = {}) {
     entry.size += Number(f.size) || 0; // модель из нескольких частей: размеры складываются
     byTag.set(tag, entry);
   }
-  return [...byTag.values()].sort((a, b) => (a.size - b.size) || a.tag.localeCompare(b.tag));
+  const variants = [...byTag.values()].sort((a, b) => (a.size - b.size) || a.tag.localeCompare(b.tag));
+  // gated: автор требует принять условия на странице модели — без этого загрузка не начнётся
+  variants.gated = Boolean(json.gated);
+  return variants;
 }

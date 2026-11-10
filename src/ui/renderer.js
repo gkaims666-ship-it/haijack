@@ -13,6 +13,7 @@ export class Renderer {
     this.question = question;
     this.spinner = new Spinner();
     this.alwaysAllow = new Set();
+    this.canAsk = Boolean(process.stdin.isTTY); // можно ли задавать пользователю вопросы
     this.currentAgent = null;
     this.atLineStart = true;
     this.inFence = false;

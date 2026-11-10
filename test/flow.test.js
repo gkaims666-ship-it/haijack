@@ -192,3 +192,64 @@ test('непрерывная задача останавливается сам�
   assert.ok(ui.log.some((l) => /warn:Непрерывная задача остановлена: 3 итерации подряд не удались/.test(l)));
   assert.equal(ui.log.filter((l) => l === 'error:API 529: overloaded').length, 3);
 });
+
+test('задача про само приложение: программа предлагает режим «приложение», отказ запоминает', async () => {
+  const { looksLikeSelfTask } = await import('../src/session.js');
+  for (const t of ['улучши само приложение: добавь кнопку', 'В приложении добавь тёмную тему', 'исправь свой интерфейс', 'поменяй цвет в этом приложении', 'Доработай Local Claude Code']) {
+    assert.equal(looksLikeSelfTask(t), true, t);
+  }
+  for (const t of ['добавь тесты в проект', 'исправь ошибку в приложении заказчика на Django', 'создай hello.js', 'объясни код']) {
+    assert.equal(looksLikeSelfTask(t), false, t);
+  }
+
+  const { session, ui, client } = setup((role) => (role === 'architect' ? 'РЕЖИМ: ОТВЕТ\nОтвет.' : 'ок'));
+  const asked = [];
+  ui.canAsk = true;
+  ui.confirm = async (q) => { asked.push(q); return false; };
+  await session.handle('улучши само приложение');
+  assert.equal(asked.length, 1);
+  assert.match(asked[0], /Похоже, задача про само приложение/);
+  // Отказ: задача выполнена в проекте, повторно вопрос не задаётся
+  assert.equal(client.counts.architect, 1);
+  await session.handle('и ещё улучши само приложение');
+  assert.equal(asked.length, 1);
+
+  // Без возможности спросить (однократный запуск без терминала) задача идёт в проект молча
+  const quiet = setup((role) => (role === 'architect' ? 'РЕЖИМ: ОТВЕТ\nОтвет.' : 'ок'));
+  quiet.ui.confirm = async () => { throw new Error('вопрос не должен задаваться'); };
+  await quiet.session.handle('улучши само приложение');
+  assert.equal(quiet.client.counts.architect, 1);
+});
+
+test('диалог с ассистентом сохраняется и продолжается после перезапуска', async () => {
+  const cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'lcc-dialog-'));
+  const dialogFile = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'lcc-dialog-store-')), 'session', 'solo.json');
+  const make = (dir = cwd) => {
+    const cfg = Object.assign(buildConfig(dir), { autoApprove: true, memory: false });
+    const client = new FakeClient((role, n, req) => `ответ ${req.messages.length}`);
+    return { client, orch: new Orchestrator({ client, cfg, ui: silentUi(), usage: new Usage(), dialogFile }) };
+  };
+  const first = make();
+  await first.orch.solo('меня зовут Олег', new AbortController().signal);
+  assert.equal(first.orch.agents.solo.messages.length, 2);
+
+  // «Перезапуск»: новый оркестратор видит прежний разговор и продолжает его
+  const second = make();
+  assert.equal(second.orch.agents.solo.messages.length, 2);
+  await second.orch.solo('как меня зовут?', new AbortController().signal);
+  const sent = second.client.requests[0].req.messages;
+  assert.deepEqual(sent.map((m) => m.role), ['user', 'assistant', 'user']);
+  assert.equal(sent[0].content, 'меня зовут Олег');
+
+  // Другой проект — чужой диалог не подхватывается
+  assert.equal(make(fs.mkdtempSync(path.join(os.tmpdir(), 'lcc-other-'))).orch.agents.solo.messages.length, 0);
+
+  // Очистка диалога стирает и сохранённую копию
+  second.orch.resetAll();
+  assert.equal(fs.existsSync(dialogFile), false);
+  assert.equal(make().orch.agents.solo.messages.length, 0);
+
+  // Повреждённый файл не мешает запуску
+  fs.writeFileSync(dialogFile, '{"cwd": 1, "messages": [{"role": "tool"}]');
+  assert.equal(make().orch.agents.solo.messages.length, 0);
+});

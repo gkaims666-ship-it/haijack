@@ -134,6 +134,7 @@ export class WebRenderer {
     this.cfg = cfg;
     this.hub = hub;
     this.alwaysAllow = new Set();
+    this.canAsk = true; // вопросы показываются карточкой в браузере
     this.thinking = false;
   }
 
