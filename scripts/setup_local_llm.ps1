@@ -60,7 +60,7 @@ $EnvLines = @(
   "LOCAL_LLM_BASE_URL=$Base/v1"
   'LOCAL_LLM_API_KEY=ollama'
   "LOCAL_LLM_MODEL=$Model"
-  'LOCAL_LLM_NUM_CTX=32768'
+  'LOCAL_LLM_NUM_CTX=16384'
   'LOCAL_LLM_TIMEOUT=180000'
 )
 if ($Fallback) { $EnvLines += "LOCAL_LLM_FALLBACK_MODEL=$Fallback" }

@@ -33,7 +33,7 @@ export class Agent {
 
   #buildSystem() {
     const memory = this.cfg.memory && this.memory ? this.memory.read() : '';
-    return buildSystemPrompt(this.role, this.cfg.cwd, memory);
+    return buildSystemPrompt(this.role, this.cfg.cwd, memory, { compact: this.cfg.provider === 'local' });
   }
 
   /** Обновить системный промт (после изменения памяти), не теряя историю диалога */

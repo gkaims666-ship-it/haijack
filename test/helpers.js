@@ -25,7 +25,7 @@ export function silentUi(overrides = {}) {
 }
 
 const roleOf = (system) => {
-  const s = typeof system === 'string' ? system : JSON.stringify(system);
+  const s = (typeof system === 'string' ? system : JSON.stringify(system)).replace(/Role: (Architect|Coder|Reviewer|Executor)/, 'Agent-$1');
   for (const [mark, role] of [['Agent-Architect', 'architect'], ['Agent-Coder', 'coder'], ['Agent-Reviewer', 'reviewer'], ['Agent-Executor', 'executor'], ['долговременную память', 'memory']]) {
     if (s.includes(mark)) return role;
   }

@@ -26,7 +26,7 @@ function localConfig(url, overrides = {}) {
     provider: 'local', model: 'main-model', memory: false, autoApprove: true, maxTurns: 10, maxFixRounds: 2, maxCycles: 2,
     models: { architect: 'main-model', coder: 'main-model', reviewer: 'main-model', executor: 'main-model', solo: 'main-model' },
   });
-  cfg.local = { baseUrl: url, apiKey: 'ollama', fallbackModel: '', numCtx: 32768, timeoutMs: 20000, ...overrides };
+  cfg.local = { baseUrl: url, apiKey: 'ollama', fallbackModel: '', numCtx: 16384, timeoutMs: 20000, firstTimeoutMs: 20000, ...overrides };
   return cfg;
 }
 
@@ -108,9 +108,10 @@ test('резервный разбор вызовов инструментов, �
   assert.equal(r.text, example);
 });
 
-for (const style of ['native', 'text']) {
-  test(`полный конвейер на локальной модели (${style === 'native' ? 'нативные вызовы' : '<think> и текстовые вызовы'})`, async () => {
-    const mock = await startOpenAIMock({ style });
+for (const [ollama, style] of [[true, 'native'], [true, 'text'], [false, 'native'], [false, 'text']]) {
+  const server = ollama ? 'Ollama, свой API' : 'сторонний сервер, OpenAI-совместимый API';
+  test(`полный конвейер на локальной модели (${server}; ${style === 'native' ? 'нативные вызовы' : '<think> и текстовые вызовы'})`, async () => {
+    const mock = await startOpenAIMock({ style, ollama });
     try {
       const cfg = localConfig(mock.url);
       const ui = silentUi();
@@ -121,21 +122,91 @@ for (const style of ['native', 'text']) {
       assert.deepEqual(res.files, ['hello.js']);
       assert.equal(fs.readFileSync(path.join(cfg.cwd, 'hello.js'), 'utf8'), "console.log('hello');\n");
       // Размышления и разметка вызовов не попадают ни пользователю, ни в историю
-      assert.ok(!ui.text.includes('<think>') && !ui.text.includes('tool_call'), ui.text);
+      assert.ok(!ui.text.includes('<think>') && !ui.text.includes('tool_call') && !ui.text.includes('размышления'), ui.text);
       const sent = JSON.stringify(mock.requests.map((r) => r.body.messages));
       assert.ok(!sent.includes('<think>') && !sent.includes('<tool_call>'));
-      // Параметры запроса
-      const body = mock.requests[0].body;
-      assert.equal(body.temperature, 0.2);
-      assert.equal(body.top_p, 0.9);
-      assert.deepEqual(body.options, { num_ctx: 32768 });
-      assert.equal(mock.requests[0].headers.authorization, 'Bearer ollama');
+
+      const { body, path: route, headers } = mock.requests[0];
+      assert.equal(headers.authorization, 'Bearer ollama');
       assert.ok(body.tools.every((t) => t.type === 'function' && t.function.parameters.type === 'object'));
+      if (ollama) {
+        // С Ollama клиент говорит на её собственном API: только так можно задать размер контекста
+        assert.equal(route, '/api/chat');
+        assert.deepEqual(body.options, { temperature: 0.2, top_p: 0.9, num_predict: cfg.maxTokens, num_ctx: 16384 });
+        assert.equal(body.keep_alive, '30m');
+        // Вызовы инструментов уходят обратно в формате Ollama: аргументы объектом, у результата — имя инструмента
+        const withTool = mock.requests.find((r) => r.body.messages.some((m) => m.role === 'tool')).body.messages;
+        const call = withTool.find((m) => m.tool_calls).tool_calls[0];
+        assert.equal(typeof call.function.arguments, 'object');
+        assert.equal(withTool.find((m) => m.role === 'tool').tool_name, call.function.name);
+      } else {
+        assert.equal(route, '/v1/chat/completions');
+        assert.equal(body.temperature, 0.2);
+        assert.equal(body.top_p, 0.9);
+        assert.equal(body.options, undefined);
+      }
+      // Локальной модели даются короткие инструкции: она читает запрос целиком на каждом шаге
+      const system = body.messages[0].content;
+      assert.match(system, /Role: Architect/);
+      assert.match(system, /РЕЖИМ: ИЗМЕНЕНИЯ/);
+      assert.ok(system.length < 2000, `инструкции слишком длинные: ${system.length}`);
     } finally {
       mock.server.close();
     }
   });
 }
+
+test('медленная модель: программа ждёт первый ответ дольше обычного молчания и объясняет задержку', async () => {
+  // Модель «думает» 700 мс перед первым словом; посреди ответа допустимо молчание только 200 мс
+  const mock = await startOpenAIMock({ delayMs: 700, cpuShare: 0.6 });
+  try {
+    const cfg = localConfig(mock.url, { timeoutMs: 200, firstTimeoutMs: 5000 });
+    const client = new OpenAIClient(cfg);
+    const notices = [];
+    const msg = await client.stream(
+      { model: 'main-model', system: 'Ответь одним словом.', messages: [{ role: 'user', content: 'ping' }], tools: [], maxTokens: 10 },
+      { onNotice: (t) => notices.push(t) },
+    );
+    assert.equal(msg.content[0].text, 'pong');
+    assert.deepEqual(msg.usage, { input_tokens: 11, output_tokens: 7 });
+  } finally {
+    mock.server.close();
+  }
+
+  // Первый ответ не пришёл совсем: ошибка называет настоящую причину и говорит, что делать
+  const slow = await startOpenAIMock({ hanging: ['main-model'], cpuShare: 0.6 });
+  try {
+    const client = new OpenAIClient(localConfig(slow.url, { firstTimeoutMs: 400 }));
+    await assert.rejects(
+      client.stream({ model: 'main-model', system: '', messages: [{ role: 'user', content: 'x' }], tools: [], maxTokens: 10 }, {}),
+      (err) => {
+        assert.match(err.message, /не начала отвечать за 0 с|не начала отвечать/);
+        assert.match(err.message, /Сервер моделей работает, но модель слишком медленная/);
+        assert.match(err.message, /не помещается в видеопамять: 60% работает на процессоре/);
+        assert.doesNotMatch(err.message, /Проверьте, что он запущен/);
+        return true;
+      },
+    );
+  } finally {
+    slow.server.closeAllConnections?.();
+    slow.server.close();
+  }
+});
+
+test('предупреждение о модели, которая не помещается в видеопамять', async () => {
+  const { ollamaLoadWarning } = await import('../src/api/openai.js');
+  const partly = await startOpenAIMock({ cpuShare: 0.45 });
+  const onCpu = await startOpenAIMock({ cpuShare: 1 });
+  const fits = await startOpenAIMock({ cpuShare: 0 });
+  try {
+    assert.match(await ollamaLoadWarning({ baseUrl: partly.url }, 'main-model'), /20,0 ГБ в памяти\) не помещается в видеопамять: 45% работает на процессоре/);
+    assert.match(await ollamaLoadWarning({ baseUrl: onCpu.url }, 'main-model'), /целиком на процессоре/);
+    assert.equal(await ollamaLoadWarning({ baseUrl: fits.url }, 'main-model'), '');
+    assert.equal(await ollamaLoadWarning({ baseUrl: 'http://127.0.0.1:9/v1' }, 'main-model'), '');
+  } finally {
+    for (const m of [partly, onCpu, fits]) m.server.close();
+  }
+});
 
 test('при сбое основной модели клиент переходит на запасную и остаётся на ней', async () => {
   const mock = await startOpenAIMock({ failing: ['main-model'] });
@@ -162,7 +233,7 @@ test('без запасной модели сбой сообщается пон�
     const client = new OpenAIClient(localConfig(mock.url));
     await assert.rejects(
       client.stream({ model: 'main-model', system: '', messages: [{ role: 'user', content: 'x' }], tools: [], maxTokens: 10 }, {}),
-      /Сервер моделей 500: model requires more system memory/,
+      /Модели main-model не хватает памяти: model requires more system memory[\s\S]*вариант поменьше/,
     );
   } finally {
     mock.server.close();
@@ -172,14 +243,14 @@ test('без запасной модели сбой сообщается пон�
 test('молчание сервера дольше таймаута — переход на запасную модель', async () => {
   const mock = await startOpenAIMock({ hanging: ['main-model'] });
   try {
-    const client = new OpenAIClient(localConfig(mock.url, { fallbackModel: 'small-model', timeoutMs: 300 }));
+    const client = new OpenAIClient(localConfig(mock.url, { fallbackModel: 'small-model', firstTimeoutMs: 300 }));
     const notices = [];
     const msg = await client.stream(
       { model: 'main-model', system: 'Ответь одним словом.', messages: [{ role: 'user', content: 'ping' }], tools: [], maxTokens: 10 },
       { onNotice: (t) => notices.push(t) },
     );
     assert.equal(msg.content[0].text, 'pong');
-    assert.match(notices[0], /нет ответа/);
+    assert.match(notices[0], /не начала отвечать/);
   } finally {
     mock.server.closeAllConnections?.();
     mock.server.close();
@@ -232,7 +303,7 @@ test('настройки: LLM_PROVIDER и LOCAL_LLM_* читаются как с
     const cfg = buildConfig(os.tmpdir());
     assert.equal(cfg.provider, 'local');
     assert.equal(cfg.model, 'big');
-    assert.deepEqual(cfg.local, { baseUrl: 'http://localhost:11434/v1', apiKey: 'ollama', fallbackModel: 'tiny', numCtx: 16384, timeoutMs: 60000 });
+    assert.deepEqual(cfg.local, { baseUrl: 'http://localhost:11434/v1', apiKey: 'ollama', fallbackModel: 'tiny', numCtx: 16384, timeoutMs: 60000, firstTimeoutMs: 900000 });
     assert.equal(cfg.models.coder, 'big');
     assert.equal(cfg.models.executor, 'quick');
   } finally {
@@ -242,4 +313,47 @@ test('настройки: LLM_PROVIDER и LOCAL_LLM_* читаются как с
   const cloud = buildConfig(os.tmpdir());
   assert.equal(cloud.provider, 'anthropic');
   assert.equal(cloud.model, 'claude-sonnet-5-5');
+});
+
+for (const ollama of [true, false]) {
+  test(`модель без встроенного вызова инструментов работает в текстовом режиме (${ollama ? 'Ollama' : 'сторонний сервер'})`, async () => {
+    const mock = await startOpenAIMock({ noTools: true, ollama });
+    try {
+      const cfg = localConfig(mock.url);
+      const ui = silentUi();
+      const orch = new Orchestrator({ client: new ModelClient(cfg), cfg, ui, usage: new Usage() });
+      const res = await orch.run('создай hello.js', new AbortController().signal);
+      assert.equal(res.verdict, 'OK');
+      assert.equal(res.status, 'PASS');
+      assert.equal(fs.readFileSync(path.join(cfg.cwd, 'hello.js'), 'utf8'), "console.log('hello');\n");
+      // Об отказе модели сообщается один раз; дальше запросы сразу идут в текстовом режиме
+      assert.equal(ui.log.filter((l) => /не поддерживает встроенный вызов инструментов/.test(l)).length, 1);
+      assert.equal(mock.requests.filter((r) => r.body.tools).length, 1);
+      const last = mock.requests[mock.requests.length - 1].body.messages;
+      assert.match(last[0].content, /# Tools[\s\S]*<tool_call>\{"name": "TOOL_NAME"[\s\S]*- run_command:/);
+      // История уходит обычными сообщениями: вызовы — текстом, результаты — репликой пользователя
+      assert.ok(last.every((m) => ['system', 'user', 'assistant'].includes(m.role) && !m.tool_calls));
+      assert.ok(last.some((m) => m.role === 'assistant' && m.content.includes('<tool_call>{"name":"run_command"')));
+      assert.ok(last.some((m) => m.role === 'user' && m.content.startsWith('Tool result:')));
+      assert.ok(!ui.text.includes('<tool_call>'));
+    } finally {
+      mock.server.close();
+    }
+  });
+}
+
+test('текстовый режим: преобразование истории', async () => {
+  const { toTextToolMessages } = await import('../src/api/openai.js');
+  const out = toTextToolMessages([
+    { role: 'system', content: 'sys' },
+    { role: 'user', content: 'задача' },
+    { role: 'assistant', content: 'читаю', tool_calls: [{ id: 'a', type: 'function', function: { name: 'read_file', arguments: '{"path":"a.js"}' } }, { id: 'b', type: 'function', function: { name: 'grep', arguments: '{"pattern":"x"}' } }] },
+    { role: 'tool', tool_call_id: 'a', content: 'код' },
+    { role: 'tool', tool_call_id: 'b', content: 'совпадений нет' },
+    { role: 'user', content: 'ещё' },
+  ], [{ name: 'read_file', description: 'читает файл', input_schema: { type: 'object', properties: { path: { type: 'string' } }, required: ['path'] } }]);
+  assert.deepEqual(out.map((m) => m.role), ['system', 'user', 'assistant', 'user']);
+  assert.match(out[0].content, /^sys\n\n# Tools[\s\S]*- read_file: читает файл\n {2}arguments \(JSON schema\): \{"type":"object"/);
+  assert.equal(out[2].content, 'читаю\n<tool_call>{"name":"read_file","arguments":{"path":"a.js"}}</tool_call>\n<tool_call>{"name":"grep","arguments":{"pattern":"x"}}</tool_call>');
+  assert.equal(out[3].content, 'Tool result:\nкод\n\nTool result:\nсовпадений нет\n\nещё');
 });

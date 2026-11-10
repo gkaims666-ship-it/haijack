@@ -309,20 +309,128 @@ export async function pullModel(local, name, { signal, onProgress } = {}) {
   }
 }
 
+/**
+ * Текстовый режим вызова инструментов — для моделей, чей шаблон не поддерживает встроенный вызов
+ * (таких много среди сборок с Hugging Face). Инструменты описываются в системном сообщении,
+ * модель пишет вызов текстом в <tool_call>…</tool_call>, а результаты приходят обычными сообщениями.
+ * Вход и выход — сообщения в формате OpenAI.
+ */
+export function toTextToolMessages(messages, tools) {
+  const list = (tools || []).map((t) => `- ${t.name}: ${t.description}\n  arguments (JSON schema): ${JSON.stringify(simplifySchema(t.input_schema))}`).join('\n');
+  const protocol = [
+    '# Tools',
+    'To call a tool, write exactly this and nothing after it:',
+    '<tool_call>{"name": "TOOL_NAME", "arguments": {...}}</tool_call>',
+    'Call one tool at a time, then stop: the result arrives in the next message. When no tool is needed, answer normally.',
+    'Available tools:',
+    list,
+  ].join('\n');
+  const out = [];
+  let hasSystem = false;
+  for (const m of messages) {
+    if (m.role === 'system') {
+      out.push({ role: 'system', content: `${m.content}\n\n${protocol}` });
+      hasSystem = true;
+    } else if (m.role === 'assistant') {
+      const calls = (m.tool_calls || []).map((c) => `<tool_call>${JSON.stringify({ name: c.function.name, arguments: safeParse(c.function.arguments) })}</tool_call>`);
+      out.push({ role: 'assistant', content: [m.content || '', ...calls].filter(Boolean).join('\n') });
+    } else {
+      const content = m.role === 'tool' ? `Tool result:\n${m.content}` : m.content;
+      const last = out[out.length - 1];
+      // Несколько результатов подряд склеиваются: шаблоны моделей требуют чередования ролей
+      if (last?.role === 'user') last.content += `\n\n${content}`;
+      else out.push({ role: 'user', content });
+    }
+  }
+  if (!hasSystem) out.unshift({ role: 'system', content: protocol });
+  return out;
+}
+
+function safeParse(json) {
+  try { return JSON.parse(json || '{}'); } catch { return {}; }
+}
+
+/** Сообщения OpenAI -> сообщения собственного API Ollama (аргументы вызовов — объектами, у результатов — имя инструмента) */
+export function toOllamaMessages(messages) {
+  const names = new Map();
+  return messages.map((m) => {
+    if (m.role === 'assistant' && m.tool_calls) {
+      return {
+        role: 'assistant',
+        content: m.content || '',
+        tool_calls: m.tool_calls.map((c) => {
+          names.set(c.id, c.function.name);
+          let args = {};
+          try { args = JSON.parse(c.function.arguments || '{}'); } catch { /* оставляем пустые аргументы */ }
+          return { function: { name: c.function.name, arguments: args } };
+        }),
+      };
+    }
+    if (m.role === 'tool') return { role: 'tool', content: m.content, tool_name: names.get(m.tool_call_id) || '' };
+    return { role: m.role, content: m.content || '' };
+  });
+}
+
+/**
+ * Сколько модели работает на процессоре вместо видеокарты (по данным Ollama).
+ * @returns {Promise<string>} предупреждение или пустая строка
+ */
+export async function ollamaLoadWarning(local, model) {
+  try {
+    const origin = local.baseUrl.replace(/\/v1$/, '');
+    const res = await fetch(`${origin}/api/ps`, { signal: AbortSignal.timeout(4000) });
+    if (!res.ok) return '';
+    const entry = ((await res.json()).models || []).find((m) => m.name === model || m.model === model);
+    if (!entry || !entry.size) return '';
+    const onCpu = Math.round((1 - (entry.size_vram || 0) / entry.size) * 100);
+    if (onCpu < 10) return '';
+    const gb = (entry.size / 2 ** 30).toFixed(1).replace('.', ',');
+    return onCpu >= 95
+      ? `Модель ${model} (${gb} ГБ в памяти) работает целиком на процессоре: видеокарта не используется. Ответы будут очень медленными — возьмите вариант модели поменьше.`
+      : `Модель ${model} (${gb} ГБ в памяти) не помещается в видеопамять: ${onCpu}% работает на процессоре. Ответы будут медленными — возьмите вариант поменьше или уменьшите размер контекста в настройках.`;
+  } catch {
+    return '';
+  }
+}
+
 export class OpenAIClient {
   constructor(cfg) {
     this.cfg = cfg;
     this.off = { usage: false, options: false }; // что сервер отказался принимать
     this.failedOver = new Set();                 // модели, с которых клиент ушёл на запасную
+    this.ollama = new Map();                     // адрес сервера -> это Ollama? (у неё свой, более полный API)
+    this.warned = new Set();                     // модели, о медленной работе которых уже сообщили
+    this.textTools = new Set();                  // модели без встроенного вызова инструментов: с ними — текстовый режим
   }
 
   get local() { return this.cfg.local; }
   get baseUrl() { return this.local.baseUrl; }
+  get origin() { return this.baseUrl.replace(/\/v1$/, ''); }
 
   headers() {
     const h = { 'content-type': 'application/json', accept: 'text/event-stream' };
     if (this.local.apiKey) h.authorization = `Bearer ${this.local.apiKey}`;
     return h;
+  }
+
+  /**
+   * Ollama ли это. С ней клиент говорит на её собственном API (/api/chat): только он позволяет
+   * задать размер контекста. Через OpenAI-совместимый адрес Ollama этот параметр молча игнорирует
+   * и выбирает контекст сама — слишком маленький или слишком большой для памяти компьютера.
+   */
+  async isOllama() {
+    const key = this.baseUrl;
+    if (!this.ollama.has(key)) {
+      let yes = false;
+      try {
+        const res = await fetch(`${this.origin}/api/version`, { signal: AbortSignal.timeout(3000) });
+        yes = res.ok && typeof (await res.json()).version === 'string';
+      } catch { /* не Ollama или сервер недоступен: об этом сообщит основной запрос */ }
+      // Отрицательный ответ не запоминаем: сервер мог быть ещё не запущен
+      if (!yes) return false;
+      this.ollama.set(key, true);
+    }
+    return true;
   }
 
   /** Список моделей, установленных на сервере */
@@ -348,11 +456,30 @@ export class OpenAIClient {
       temperature: 0.2,
       top_p: 0.9,
     };
-    const converted = toOpenAITools(tools);
-    if (converted.length) body.tools = converted;
+    if (this.textTools.has(model)) body.messages = toTextToolMessages(body.messages, tools);
+    else {
+      const converted = toOpenAITools(tools);
+      if (converted.length) body.tools = converted;
+    }
     if (!this.off.usage) body.stream_options = { include_usage: true };
-    // Размер контекста — параметр Ollama; у неё по умолчанию он мал, и длинная история молча обрезается
-    if (!this.off.options && this.local.numCtx) body.options = { num_ctx: this.local.numCtx };
+    return body;
+  }
+
+  /** Тело запроса к собственному API Ollama */
+  buildOllamaBody({ model, system, messages, tools, maxTokens }) {
+    const textMode = this.textTools.has(model);
+    const openai = toOpenAIMessages(system, messages);
+    const body = {
+      model,
+      messages: textMode ? toTextToolMessages(openai, tools) : toOllamaMessages(openai),
+      stream: true,
+      keep_alive: '30m', // модель остаётся в памяти между шагами агента, а не загружается заново
+      options: { temperature: 0.2, top_p: 0.9, num_predict: maxTokens },
+    };
+    // Размер контекста задаётся явно: по умолчанию Ollama выбирает его сама по объёму видеопамяти
+    if (this.local.numCtx) body.options.num_ctx = this.local.numCtx;
+    const converted = textMode ? [] : toOpenAITools(tools);
+    if (converted.length) body.tools = converted;
     return body;
   }
 
@@ -365,10 +492,16 @@ export class OpenAIClient {
   async stream(req, handlers = {}) {
     const { signal } = req;
     if (!req.model) throw new ApiError('Не выбрана модель. Укажите её в настройках.', 0);
+    const native = await this.isOllama();
+    const url = native ? `${this.origin}/api/chat` : `${this.baseUrl}/chat/completions`;
     // Модель, которая уже подводила в этой сессии, не трогаем снова — сразу берём запасную
     let model = this.failedOver.has(req.model) ? this.#fallbackFor(req.model) || req.model : req.model;
-    const url = `${this.baseUrl}/chat/completions`;
     const toolNames = (req.tools || []).map((t) => t.name);
+    // Ожидание первого ответа отдельное и долгое: модель загружается в память и читает весь запрос.
+    // После первого куска действует обычный таймаут молчания.
+    const firstMs = this.local.firstTimeoutMs || 15 * 60 * 1000;
+    const quietMs = this.local.timeoutMs || 180000;
+    const minutes = (ms) => (ms >= 120000 ? `${Math.round(ms / 60000)} мин` : `${Math.round(ms / 1000)} с`);
     let attempt = 0;
 
     const failover = (reason) => {
@@ -386,25 +519,40 @@ export class OpenAIClient {
       // Общий сигнал: остановка пользователем или молчание сервера дольше таймаута
       const ac = new AbortController();
       let timedOut = false;
+      let started = false;
       let timer;
-      const arm = () => {
+      const arm = (ms) => {
         clearTimeout(timer);
-        timer = setTimeout(() => { timedOut = true; ac.abort(); }, this.local.timeoutMs || 180000);
+        timer = setTimeout(() => { timedOut = true; ac.abort(); }, ms);
       };
+      const alive = () => { started = true; clearTimeout(slowTimer); arm(quietMs); };
+      // Если модель долго молчит, объясняем почему — иначе это выглядит как зависание
+      const current = model;
+      const slowTimer = setTimeout(async () => {
+        if (this.warned.has(current)) return;
+        this.warned.add(current);
+        const why = native ? await ollamaLoadWarning(this.local, current) : '';
+        handlers.onNotice?.(why || `Модель ${current} ещё не начала отвечать: она загружается в память и читает запрос. На большой модели это занимает до нескольких минут.`);
+      }, Math.min(25000, firstMs / 2));
       const onAbort = () => ac.abort();
       signal?.addEventListener('abort', onAbort, { once: true });
-      const cleanup = () => { clearTimeout(timer); signal?.removeEventListener('abort', onAbort); };
-      arm();
+      const cleanup = () => { clearTimeout(timer); clearTimeout(slowTimer); signal?.removeEventListener('abort', onAbort); };
+      const silence = () => (started
+        ? `поток оборвался: нет данных ${minutes(quietMs)}`
+        : `модель не начала отвечать за ${minutes(firstMs)}`);
+      arm(firstMs);
 
       try {
         let res;
         try {
-          res = await fetch(url, { method: 'POST', headers: this.headers(), body: JSON.stringify(this.buildBody({ ...req, model })), signal: ac.signal });
+          const body = native ? this.buildOllamaBody({ ...req, model }) : this.buildBody({ ...req, model });
+          res = await fetch(url, { method: 'POST', headers: this.headers(), body: JSON.stringify(body), signal: ac.signal });
         } catch (err) {
           if (signal?.aborted) throw abortError();
-          const reason = timedOut ? `нет ответа ${Math.round(this.local.timeoutMs / 1000)} с` : err.cause?.code || err.message;
+          const reason = timedOut ? silence() : err.cause?.code || err.message;
           if (failover(reason)) continue;
-          if (attempt < 2 && !timedOut) {
+          if (timedOut) throw new ApiError(await this.#slowError(model, silence(), native), 0);
+          if (attempt < 2) {
             const wait = 1000 * 2 ** attempt;
             handlers.onRetry?.({ attempt: attempt + 1, wait, reason });
             cleanup();
@@ -420,10 +568,15 @@ export class OpenAIClient {
           let msg = text;
           try { const j = JSON.parse(text); msg = j.error?.message || j.error || j.message || text; } catch { /* не JSON */ }
           msg = typeof msg === 'string' ? msg : JSON.stringify(msg);
-          if (res.status === 400 && !this.off.usage && /stream_options/i.test(msg)) { this.off.usage = true; continue; }
-          if (res.status === 400 && !this.off.options && /\boptions\b|num_ctx|unknown field|unrecognized|extra_forbidden|additional properties/i.test(msg)) { this.off.options = true; continue; }
+          if (res.status === 400 && !native && !this.off.usage && /stream_options/i.test(msg)) { this.off.usage = true; continue; }
+          if (/does not support tools|tools? (is|are) not supported/i.test(msg) && !this.textTools.has(model)) {
+            // У модели нет встроенного вызова инструментов — переходим на текстовый режим и повторяем запрос
+            this.textTools.add(model);
+            handlers.onNotice?.(`Модель ${model} не поддерживает встроенный вызов инструментов. Использую текстовый режим: он работает с любой моделью, но менее надёжен.`);
+            continue;
+          }
           if (/does not support tools|tools? (is|are) not supported/i.test(msg)) {
-            throw new ApiError(`Модель ${model} не умеет вызывать инструменты, а без них агенты не могут читать и менять файлы. Выберите модель с поддержкой tool calling.`, res.status, text);
+            throw new ApiError(`Модель ${model} не умеет вызывать инструменты, а без них агенты не могут читать и менять файлы. Выберите модель с поддержкой вызова инструментов (в описании модели: tools или function calling).`, res.status, text);
           }
           // 500 от Ollama — чаще всего модель не поместилась в память; 404 — модель не скачана
           if ((res.status >= 500 || res.status === 404 || isOom(msg)) && failover(isOom(msg) ? 'не хватает памяти' : `HTTP ${res.status}: ${msg.slice(0, 120)}`)) continue;
@@ -435,18 +588,21 @@ export class OpenAIClient {
             attempt++;
             continue;
           }
-          if (res.status === 404) throw new ApiError(`Модель ${model} не найдена на сервере ${this.baseUrl}. Скачайте её: ollama pull ${model}`, 404, text);
+          if (res.status === 404) throw new ApiError(`Модель ${model} не найдена на сервере ${this.baseUrl}. Скачайте её в настройках («Найти и скачать модель») или командой: ollama pull ${model}`, 404, text);
+          if (isOom(msg)) throw new ApiError(`Модели ${model} не хватает памяти: ${msg.slice(0, 200)}. Возьмите вариант поменьше или уменьшите размер контекста в настройках.`, res.status, text);
           throw new ApiError(`Сервер моделей ${res.status}: ${msg}`, res.status, text);
         }
 
         try {
-          return await this.#consume(res.body, handlers, toolNames, arm);
+          return native
+            ? await this.#consumeOllama(res.body, handlers, toolNames, alive)
+            : await this.#consume(res.body, handlers, toolNames, alive);
         } catch (err) {
           if (signal?.aborted) throw abortError();
           if (timedOut || err.name === 'AbortError' || err instanceof TypeError) {
-            const reason = timedOut ? `поток оборвался: нет данных ${Math.round(this.local.timeoutMs / 1000)} с` : `поток оборвался: ${err.cause?.code || err.message}`;
+            const reason = timedOut ? silence() : `поток оборвался: ${err.cause?.code || err.message}`;
             if (failover(reason)) continue;
-            throw new ApiError(`Сервер моделей: ${reason}`, 0);
+            throw new ApiError(timedOut ? await this.#slowError(model, reason, native) : `Сервер моделей: ${reason}`, 0);
           }
           throw err;
         }
@@ -454,6 +610,82 @@ export class OpenAIClient {
         cleanup();
       }
     }
+  }
+
+  /** Понятное объяснение, почему модель не ответила вовремя, и что с этим делать */
+  async #slowError(model, reason, native) {
+    const why = native ? await ollamaLoadWarning(this.local, model) : '';
+    return `Модель ${model}: ${reason}. Сервер моделей работает, но модель слишком медленная для этого компьютера.`
+      + (why ? `\n${why}` : '\nСкорее всего, она не помещается в видеопамять. Возьмите вариант поменьше (меньше гигабайт) или уменьшите размер контекста в настройках.');
+  }
+
+  /** Собирает ответ: текст без размышлений и вызовы инструментов (нативные или написанные текстом) */
+  #finish(filter, shown, toolUses, toolNames, finish, usage) {
+    const content = [];
+    let n = 0;
+    const newId = () => `call_${Date.now().toString(36)}_${n++}`;
+    for (const t of toolUses) if (!t.id) t.id = newId();
+    let text = filter.raw;
+    // Модель без открывающего тега закрыла размышления — всё до </think> отбрасываем
+    if (text.includes('</think>')) text = text.slice(text.lastIndexOf('</think>') + 8);
+    if (!toolUses.length && toolNames.length) {
+      const parsed = extractTextToolCalls(text, toolNames);
+      for (const c of parsed.calls) toolUses.push({ type: 'tool_use', id: newId(), name: c.name, input: c.input });
+      if (parsed.calls.length) text = parsed.text;
+    } else if (filter.mode === 'call') {
+      text = shown; // нативные вызовы есть, а текстовый хвост — мусор
+    }
+    text = text.trim();
+    if (text) content.push({ type: 'text', text });
+    content.push(...toolUses);
+    return { content, stop_reason: toolUses.length ? 'tool_use' : STOP_REASON[finish] || 'end_turn', usage };
+  }
+
+  /** Поток собственного API Ollama: строки JSON, вызовы инструментов приходят целиком */
+  async #consumeOllama(body, handlers, toolNames, alive) {
+    const filter = new TextFilter();
+    let shown = '';
+    const emit = (visible) => { if (visible) { shown += visible; handlers.onText?.(visible); } };
+    const toolUses = [];
+    const usage = { input_tokens: 0, output_tokens: 0 };
+    let finish = null;
+    const decoder = new TextDecoder();
+    let buf = '';
+    const handle = (line) => {
+      if (!line.trim()) return;
+      let ev;
+      try { ev = JSON.parse(line); } catch { return; }
+      if (ev.error) {
+        const e = new ApiError(`Ошибка модели: ${String(ev.error).slice(0, 300)}`, 0, line);
+        if (isOom(String(ev.error))) e.name = 'AbortError'; // сбой модели: переход на запасную
+        throw e;
+      }
+      const m = ev.message || {};
+      // m.thinking — размышления отдельным полем: в ответ не идут
+      if (typeof m.content === 'string' && m.content) emit(filter.push(m.content));
+      for (const tc of m.tool_calls || []) {
+        const fn = tc.function || {};
+        if (!fn.name) continue;
+        let input = fn.arguments ?? {};
+        if (typeof input === 'string') { try { input = JSON.parse(input); } catch { input = { __parse_error: `Невалидный JSON аргументов: ${input.slice(0, 200)}` }; } }
+        handlers.onToolUseStart?.({ id: '', name: fn.name });
+        toolUses.push({ type: 'tool_use', id: tc.id || '', name: fn.name, input });
+      }
+      if (ev.done) {
+        finish = ev.done_reason || 'stop';
+        usage.input_tokens = ev.prompt_eval_count || 0;
+        usage.output_tokens = ev.eval_count || 0;
+      }
+    };
+    for await (const chunk of body) {
+      alive(); // данные идут — отодвигаем таймаут молчания
+      buf += decoder.decode(chunk, { stream: true });
+      let nl;
+      while ((nl = buf.indexOf('\n')) !== -1) { handle(buf.slice(0, nl)); buf = buf.slice(nl + 1); }
+    }
+    handle(buf);
+    emit(filter.end());
+    return this.#finish(filter, shown, toolUses, toolNames, finish, usage);
   }
 
   async #consume(body, handlers, toolNames, alive) {
@@ -506,33 +738,15 @@ export class OpenAIClient {
     }
     emit(filter.end());
 
-    const content = [];
     const toolUses = [];
-    let n = 0;
-    const newId = () => `call_${Date.now().toString(36)}_${n++}`;
     for (const call of [...calls.entries()].sort((a, b) => a[0] - b[0]).map((e) => e[1])) {
       if (!call.name) continue;
       let input;
       try { input = call.args.trim() ? JSON.parse(call.args) : {}; } catch {
         input = { __parse_error: `Невалидный JSON аргументов: ${call.args.slice(0, 200)}` };
       }
-      // Часть серверов не присылает id вызова — без него нельзя связать результат с вызовом
-      toolUses.push({ type: 'tool_use', id: call.id || newId(), name: call.name, input });
+      toolUses.push({ type: 'tool_use', id: call.id, name: call.name, input });
     }
-
-    let text = filter.raw;
-    // Модель без открывающего тега закрыла размышления — всё до </think> отбрасываем
-    if (text.includes('</think>')) text = text.slice(text.lastIndexOf('</think>') + 8);
-    if (!toolUses.length && toolNames.length) {
-      const parsed = extractTextToolCalls(text, toolNames);
-      for (const c of parsed.calls) toolUses.push({ type: 'tool_use', id: newId(), name: c.name, input: c.input });
-      if (parsed.calls.length) text = parsed.text;
-    } else if (filter.mode === 'call') {
-      text = shown; // нативные вызовы есть, а текстовый хвост — мусор
-    }
-    text = text.trim();
-    if (text) content.push({ type: 'text', text });
-    content.push(...toolUses);
-    return { content, stop_reason: toolUses.length ? 'tool_use' : STOP_REASON[finish] || 'end_turn', usage };
+    return this.#finish(filter, shown, toolUses, toolNames, finish, usage);
   }
 }
