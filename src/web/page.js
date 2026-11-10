@@ -395,6 +395,9 @@ button.cat-item:hover { border-color: var(--line-strong); }
         <div class="pair"><select class="input" id="s-model-l" aria-label="Модель"></select><button type="button" class="btn" id="s-load">Обновить</button></div>
         <small>Локальные модели работают без интернета, но пишут код заметно хуже моделей через API и чаще ошибаются в вызовах инструментов.</small></div>
       <button type="button" class="btn small" id="s-catalog" style="margin-top:12px">Найти и скачать модель</button>
+      <label class="field"><span>Размер контекста, токенов</span>
+        <select class="input" id="s-ctx"><option value="8192">8192 — меньше памяти, быстрее</option><option value="16384">16384 — обычный выбор</option><option value="32768">32768 — для больших файлов, нужно больше памяти</option><option value="65536">65536</option></select>
+        <small>Сколько текста модель держит в голове. Если модель не помещается в видеопамять и отвечает медленно, уменьшите.</small></label>
     </div>
 
     <h3>Работа</h3>
@@ -1162,6 +1165,10 @@ button.cat-item:hover { border-color: var(--line-strong); }
       $('s-model-a').value = s.provider === 'local' ? '' : s.model;
       $('s-effort').value = s.effort || '';
       $('s-local').value = s.local.baseUrl || '';
+      var ctx = $('s-ctx'), known = false;
+      Array.prototype.forEach.call(ctx.options, function (o) { if (Number(o.value) === s.local.numCtx) known = true; });
+      if (!known) ctx.appendChild(new Option(String(s.local.numCtx), String(s.local.numCtx)));
+      ctx.value = String(s.local.numCtx);
       fillModels($('s-model-l'), s.provider === 'local' && s.model ? [s.model] : [], s.model);
       $('s-cwd').value = s.cwd || '';
       $('s-cycles').value = s.maxCycles;
@@ -1192,7 +1199,7 @@ button.cat-item:hover { border-color: var(--line-strong); }
     var local = $('s-tabs').getAttribute('data-value') === 'local';
     var body = { provider: local ? 'local' : 'anthropic', maxCycles: Number($('s-cycles').value), memory: $('s-memory').checked };
     if (!settings.isAndroidApp) body.lan = $('s-lan').checked;
-    if (local) { body.localUrl = $('s-local').value.trim(); body.model = $('s-model-l').value; }
+    if (local) { body.localUrl = $('s-local').value.trim(); body.model = $('s-model-l').value; body.numCtx = Number($('s-ctx').value); }
     else {
       body.baseUrl = $('s-base').value.trim(); body.effort = $('s-effort').value;
       if ($('s-key').value.trim()) body.apiKey = $('s-key').value.trim();
