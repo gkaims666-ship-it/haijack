@@ -120,5 +120,8 @@ run('npx', postjectArgs);
 
 for (const f of ['stub.cjs', 'manifest.json', 'sea-config.json', 'sea-prep.blob']) fs.rmSync(path.join(dist, f), { force: true });
 
+// Ярлык для запуска двойным щелчком: открывает интерфейс в браузере, а не консольный режим
+if (isWindows) fs.writeFileSync(path.join(dist, 'lcc-web.cmd'), '@echo off\r\nrem Local Claude Code: интерфейс в браузере\r\n"%~dp0lcc.exe" --web\r\n');
+
 const sizeMb = (fs.statSync(output).size / 1024 / 1024).toFixed(1);
 console.log(`\nГотово: ${path.relative(root, output)} (${sizeMb} МБ), файлов программы внутри: ${included.length}`);

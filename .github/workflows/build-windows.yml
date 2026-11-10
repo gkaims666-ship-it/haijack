@@ -44,6 +44,7 @@ jobs:
           name: lcc-windows-x64
           path: |
             dist/lcc.exe
+            dist/lcc-web.cmd
             dist/lcc.exe.sha256
           if-no-files-found: error
 
@@ -65,8 +66,8 @@ jobs:
             flags="--prerelease"
             gh release delete "$tag" --cleanup-tag --yes 2>/dev/null || true
           fi
-          gh release create "$tag" dist/lcc.exe dist/lcc.exe.sha256 \
+          gh release create "$tag" dist/lcc.exe dist/lcc-web.cmd dist/lcc.exe.sha256 \
             --target "$GITHUB_SHA" --title "$title" $flags \
             --notes "Один файл \`lcc.exe\` для Windows x64, Node.js внутри. Коммит ${GITHUB_SHA::7}.
 
-          Запуск: откройте терминал в папке проекта и выполните \`путь\\к\\lcc.exe\`. Файл не подписан, поэтому SmartScreen при первом запуске покажет предупреждение: «Подробнее» → «Выполнить в любом случае»."
+          Интерфейс в браузере: положите \`lcc-web.cmd\` рядом с \`lcc.exe\` и запустите его двойным щелчком (или выполните \`lcc.exe --web\`). Консольный режим: откройте терминал в папке проекта и выполните \`путь\\к\\lcc.exe\`. Файл не подписан, поэтому SmartScreen при первом запуске покажет предупреждение: «Подробнее» → «Выполнить в любом случае»."
