@@ -358,6 +358,11 @@ export async function startWeb({ cfg, mode, port = 0, host = '127.0.0.1', token,
           startPull(model, base);
           return send(res, 202, { ok: true });
         }
+        case '/api/quit':
+          // Завершение программы из интерфейса: у окна приложения нет терминала, где нажать Ctrl+C
+          send(res, 200, { ok: true });
+          setTimeout(() => shutdown('stop'), 100);
+          return undefined;
         case '/api/pull/cancel':
           if (pull && !pull.done) pull.controller.abort();
           return send(res, 200, { ok: true });
