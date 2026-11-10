@@ -250,13 +250,15 @@ test('main возвращает код 75 после установки ново
 test('самопроверка работает, когда системной временной папки нет (Android, Termux)', async () => {
   reset();
   const { tempBase } = await import('../src/self/store.js');
-  const saved = process.env.TMPDIR;
-  process.env.TMPDIR = path.join(TEST_HOME, 'нет-такой-папки');
+  // В POSIX временную папку задаёт TMPDIR, в Windows — TEMP и TMP
+  const names = ['TMPDIR', 'TEMP', 'TMP'];
+  const saved = names.map((n) => process.env[n]);
+  for (const n of names) process.env[n] = path.join(TEST_HOME, 'нет-такой-папки');
   try {
     assert.equal(tempBase(), path.join(TEST_HOME, 'tmp'));
     const check = await selfCheck(prepareStaging());
     assert.equal(check.ok, true, check.report);
   } finally {
-    if (saved === undefined) delete process.env.TMPDIR; else process.env.TMPDIR = saved;
+    names.forEach((n, i) => { if (saved[i] === undefined) delete process.env[n]; else process.env[n] = saved[i]; });
   }
 });
