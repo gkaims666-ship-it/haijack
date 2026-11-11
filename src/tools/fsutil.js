@@ -22,8 +22,25 @@ export function resolvePath(cwd, p) {
   return path.resolve(cwd, s);
 }
 
+/**
+ * Настоящий путь с раскрытыми символическими ссылками. Файла может ещё не быть, поэтому раскрывается
+ * самая глубокая существующая папка, а остаток пути добавляется как есть.
+ */
+function realPath(p) {
+  let current = path.resolve(p);
+  const tail = [];
+  for (;;) {
+    try { return path.join(fs.realpathSync(current), ...tail); } catch { /* этой части пути ещё нет */ }
+    const parent = path.dirname(current);
+    if (parent === current) return path.resolve(p);
+    tail.unshift(path.basename(current));
+    current = parent;
+  }
+}
+
+/** Лежит ли target внутри root. Ссылка внутри проекта, ведущая наружу, считается путём наружу. */
 export function isInside(root, target) {
-  const rel = path.relative(path.resolve(root), path.resolve(target));
+  const rel = path.relative(realPath(root), realPath(target));
   return rel === '' || (!rel.startsWith('..') && !path.isAbsolute(rel));
 }
 

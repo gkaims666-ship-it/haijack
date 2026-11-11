@@ -95,3 +95,85 @@ test('веб: модель появилась на сервере позже —
     assert.ok(mock.loads.some((l) => l.model === 'late-model'));
   } finally { delete process.env.LCC_WARM_RETRY_MS; web.close(); await web.closed; mock.server.close(); }
 });
+
+test('запись через ссылку, ведущую за пределы проекта, запрещена; ссылка внутри проекта работает', async () => {
+  const { executeTool, getTools } = await import('../src/tools/index.js');
+  const { isInside } = await import('../src/tools/fsutil.js');
+  const cwd = tmp();
+  const outside = tmp();
+  fs.mkdirSync(path.join(cwd, 'real'));
+  try {
+    fs.symlinkSync(outside, path.join(cwd, 'out'), 'junction');
+    fs.symlinkSync(path.join(cwd, 'real'), path.join(cwd, 'in'), 'junction');
+  } catch { return; } // ссылки создать нельзя (нет прав) — проверять нечего
+  assert.equal(isInside(cwd, path.join(cwd, 'out', 'new', 'file.txt')), false);
+  assert.equal(isInside(cwd, path.join(cwd, 'in', 'file.txt')), true);
+  assert.equal(isInside(cwd, path.join(cwd, 'ещё-нет', 'file.txt')), true);
+  const ctx = { cwd, cfg: { cwd, autoApprove: true }, approve: async () => true, seen: new Map() };
+  const res = await executeTool({ name: 'write_file', input: { path: 'out/leak.txt', content: 'x' } }, getTools(['write_file']), ctx);
+  assert.equal(res.isError, true);
+  assert.match(res.content, /вне директории проекта/);
+  assert.equal(fs.existsSync(path.join(outside, 'leak.txt')), false);
+  const ok = await executeTool({ name: 'write_file', input: { path: 'in/ok.txt', content: 'x' } }, getTools(['write_file']), ctx);
+  assert.equal(ok.isError, false, ok.content);
+});
+
+test('синтаксическая ошибка в .js с import/export находится и без "type": "module"', async () => {
+  const { checkFile, nodeBinary } = await import('../src/tools/checks.js');
+  if (!nodeBinary()) return;
+  const cwd = tmp();
+  const write = (name, text) => { const f = path.join(cwd, name); fs.writeFileSync(f, text); return f; };
+  assert.match(checkFile(write('bad.js', 'export const = ;\n')), /bad\.js[\s\S]*SyntaxError/);
+  assert.equal(checkFile(write('good.js', 'import fs from "node:fs";\nexport const a = import.meta.url;\n')), '');
+  assert.equal(checkFile(write('view.js', 'export const View = () => <div/>;\n')), '');
+  assert.match(checkFile(write('plain.js', 'const = 1;\n')), /SyntaxError/);
+});
+
+test('вызов инструмента текстом: закрывающий тег внутри аргумента и другие обозначения', async () => {
+  const { extractTextToolCalls } = await import('../src/api/openai.js');
+  const names = ['read_file', 'run_command'];
+  const inside = extractTextToolCalls('<tool_call>{"name":"run_command","arguments":{"command":"echo \\"</tool_call>\\" > a.txt"}}</tool_call>', names);
+  assert.deepEqual(inside, { calls: [{ name: 'run_command', input: { command: 'echo "</tool_call>" > a.txt' } }], text: '' });
+  assert.deepEqual(extractTextToolCalls('Читаю.\n<|tool_call|>{"name":"read_file","arguments":{"path":"a.js"}}', names), { calls: [{ name: 'read_file', input: { path: 'a.js' } }], text: 'Читаю.' });
+  assert.deepEqual(extractTextToolCalls('[TOOL_CALLS] [{"name":"read_file","arguments":{"path":"{a}.js"}}]', names).calls, [{ name: 'read_file', input: { path: '{a}.js' } }]);
+  // Незнакомый инструмент и обычный текст с фигурными скобками вызовом не считаются
+  assert.deepEqual(extractTextToolCalls('<tool_call>{"name":"format_disk","arguments":{}}</tool_call>', names).calls, []);
+  assert.deepEqual(extractTextToolCalls('Объект {"name": "read_file"} описан выше, <tool_call> — это тег.', names).calls, []);
+});
+
+test('модель повторяет один и тот же вызов — он перестаёт выполняться, шаг останавливается', async () => {
+  const { tool } = await import('./helpers.js');
+  const cwd = tmp();
+  fs.writeFileSync(path.join(cwd, 'a.txt'), 'привет');
+  const cfg = buildConfig(cwd);
+  const results = [];
+  const warnings = [];
+  const ui = silentUi({ toolResult: (block, res) => results.push(res.isError ? 'отказ' : 'ok'), warn: (s) => warnings.push(s) });
+  // Застрявшая модель: всегда один и тот же вызов
+  const stuck = new Agent({ role: 'solo', toolNames: ['read_file'], client: new FakeClient((role, n) => [tool(`t${n}`, 'read_file', { path: 'a.txt' })]), cfg, ui, usage: new Usage() });
+  const out = await stuck.send('прочитай');
+  assert.match(out, /повторяла одно и то же/);
+  assert.deepEqual(results, ['ok', 'ok', 'отказ', 'отказ', 'отказ', 'отказ']);
+  assert.match(warnings.join('\n'), /зациклилась на одном действии \(read_file\)/);
+
+  // Модель, которая после подсказки идёт дальше, работает как обычно
+  results.length = 0;
+  const recovers = new Agent({ role: 'solo', toolNames: ['read_file'], client: new FakeClient((role, n) => (n <= 3 ? [tool(`t${n}`, 'read_file', { path: 'a.txt' })] : 'готово')), cfg, ui, usage: new Usage() });
+  assert.equal(await recovers.send('прочитай'), 'готово');
+  assert.deepEqual(results, ['ok', 'ok', 'отказ']);
+  assert.match(JSON.stringify(recovers.messages), /результат не изменится/);
+});
+
+test('веб: тело запроса не объект — понятный отказ, а не внутренняя ошибка', async () => {
+  const web = await startWeb({ cfg: buildConfig(tmp()), persist: false });
+  const post = async (route, body) => {
+    const res = await fetch(`http://127.0.0.1:${web.port}${route}?t=${web.token}`, { method: 'POST', headers: { 'content-type': 'application/json', 'x-lcc': '1' }, body });
+    return [res.status, (await res.json()).error || ''];
+  };
+  try {
+    assert.deepEqual(await post('/api/input', 'null'), [400, 'пустой ввод']);
+    assert.deepEqual(await post('/api/input', '"строка"'), [400, 'пустой ввод']);
+    assert.equal((await post('/api/settings', 'null'))[0], 200);
+    assert.deepEqual(await post('/api/model', '[1]'), [400, 'Некорректное имя модели']);
+  } finally { web.close(); await web.closed; }
+});
