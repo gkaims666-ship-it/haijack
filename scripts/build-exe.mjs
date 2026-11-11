@@ -36,10 +36,31 @@ function run(command, args) {
   }
 }
 
-/** Значок приложения: тёмный квадрат со скруглением и четыре цветные полосы. Рисуется прямо здесь. */
+/** Значок приложения: тёмный квадрат со скруглением и знак «hj» одной линией. Рисуется прямо здесь. */
 function buildIcon() {
   const size = 256;
-  const bars = [[62, 140, [0xFF, 0x4F, 0x8B]], [98, 102, [0xFF, 0x7B, 0x47]], [134, 124, [0xFF, 0xAE, 0x3B]], [170, 76, [0xF2, 0xDC, 0x4A]]];
+  // Знак задан в тех же координатах 48x48, что и в интерфейсе (src/web/page.js): стойка, арка, хвост, точка
+  const K = 4.6;
+  const at = ([x, y]) => [128 + (x - 22.5) * K, 128 + (y - 25.5) * K];
+  const cubic = (p0, p1, p2, p3) => Array.from({ length: 25 }, (_, i) => {
+    const t = i / 24;
+    const u = 1 - t;
+    return [0, 1].map((k) => u ** 3 * p0[k] + 3 * u * u * t * p1[k] + 3 * u * t * t * p2[k] + t ** 3 * p3[k]);
+  });
+  const strokes = [
+    { color: [0x9B, 0x7B, 0xFF], points: [[14, 8], [14, 34]] },
+    { color: [0x5C, 0x8D, 0xFF], points: cubic([14, 25], [14, 16], [31, 15], [31, 24]) },
+    { color: [0x3F, 0xC8, 0xF4], points: [[31, 24], [31, 35], ...cubic([31, 35], [31, 41], [26, 43], [20.5, 41.5])] },
+    { color: [0x6F, 0xF0, 0xD8], points: [[31, 9.5], [31, 9.5]], half: 3.1 * K },
+  ].map((st) => ({ ...st, points: st.points.map(at), half: st.half || 2.6 * K }));
+  const nearSegment = (px, py, [ax, ay], [bx, by], r) => {
+    const dx = bx - ax;
+    const dy = by - ay;
+    const len = dx * dx + dy * dy;
+    const t = len ? Math.min(1, Math.max(0, ((px - ax) * dx + (py - ay) * dy) / len)) : 0;
+    return (px - ax - t * dx) ** 2 + (py - ay - t * dy) ** 2 <= r * r;
+  };
+  const onStroke = (px, py, st) => st.points.some((p, i) => i > 0 && nearSegment(px, py, st.points[i - 1], p, st.half));
   const inRound = (x, y, x0, y0, w, h, r) => {
     const cx = Math.min(Math.max(x, x0 + r), x0 + w - r);
     const cy = Math.min(Math.max(y, y0 + r), y0 + h - r);
@@ -55,8 +76,8 @@ function buildIcon() {
         const px = x + (sx + 0.5) / S;
         const py = y + (sy + 0.5) / S;
         if (!inRound(px, py, 8, 8, 240, 240, 54)) continue;
-        let color = [0x0C, 0x0C, 0x0E];
-        for (const [top, width, c] of bars) if (inRound(px, py, 58, top, width, 24, 12)) color = c;
+        let color = [0x06, 0x08, 0x0D];
+        for (const st of strokes) if (onStroke(px, py, st)) color = st.color;
         r += color[0]; g += color[1]; b += color[2]; a += 255;
       }
       const n = S * S;
