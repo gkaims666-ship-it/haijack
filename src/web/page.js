@@ -858,7 +858,7 @@ textarea.input { padding: 10px 14px; min-height: 96px; resize: vertical; line-he
     if (!thinkingTimer) thinkingTimer = setInterval(tickThinking, 1000);
   }
   // Реплика пользователя: текст, прикреплённые файлы одной строкой и действия
-  function userRow(text) {
+  function userRow(text, images) {
     var row = el('div', 'user-row');
     var parts = text.split('\n\n# Вложение: ');
     row.appendChild(el('div', 'user', parts[0]));
@@ -866,6 +866,11 @@ textarea.input { padding: 10px 14px; min-height: 96px; resize: vertical; line-he
       var files = el('div', 'files-row');
       parts.slice(1).forEach(function (p) { files.appendChild(el('span', 'file-chip', p.split('\n')[0])); });
       files.style.padding = '6px 0 0'; row.appendChild(files);
+    }
+    if (images && images.length) {
+      var pics = el('div', 'files-row');
+      images.forEach(function (name) { pics.appendChild(el('span', 'file-chip', 'Изображение: ' + name)); });
+      pics.style.padding = '6px 0 0'; row.appendChild(pics);
     }
     var acts = el('div', 'acts-line');
     acts.appendChild(mini('Копировать', function (b) { copyText(parts[0], b); }));
@@ -1039,7 +1044,7 @@ textarea.input { padding: 10px 14px; min-height: 96px; resize: vertical; line-he
       case 'pull': drawPull(ev); break;
       case 'user':
         endSay(); closeWork(); closeThink(); visited = {}; activeRole = null; stageRole = null; lastSay = null; drawRelay();
-        add(userRow(ev.text)); toBottom();
+        add(userRow(ev.text, ev.images)); toBottom();
         transcript.push({ who: 'Вы', text: ev.text });
         break;
       case 'think':
@@ -1156,9 +1161,9 @@ textarea.input { padding: 10px 14px; min-height: 96px; resize: vertical; line-he
 
   // ---------- ввод ----------
   function grow() { input.style.height = 'auto'; input.style.height = Math.min(input.scrollHeight + 2, window.innerHeight * 0.38) + 'px'; }
-  function sendText(text) {
+  function sendText(text, images) {
     if (state.busy) { note('warn', 'Дождитесь окончания текущей задачи или остановите её.'); return Promise.resolve(false); }
-    return api('POST', '/api/input', { text: text }).then(function () { return true; }, function (e) { note('error', e.message); return false; });
+    return api('POST', '/api/input', images && images.length ? { text: text, images: images } : { text: text }).then(function () { return true; }, function (e) { note('error', e.message); return false; });
   }
   // Написанное во время работы агентов не теряется: оно ждёт в очереди и уходит, когда задача закончится
   function drawQueued() {
@@ -1182,18 +1187,22 @@ textarea.input { padding: 10px 14px; min-height: 96px; resize: vertical; line-he
   }
   function sendInput() {
     var text = input.value.trim();
+    // Изображение можно отправить и без подписи
+    if (!text && attached.some(function (f) { return f.image; })) text = 'Посмотри на изображение и скажи, что на нём.';
     if (!text) return;
     hideSlash();
     remember(text);
-    attached.forEach(function (f) { text += '\n\n# Вложение: ' + f.name + '\n' + FENCE + '\n' + f.content.replace(/\x60{3}/g, "'''") + '\n' + FENCE; });
+    attached.forEach(function (f) { if (f.image) return; text += '\n\n# Вложение: ' + f.name + '\n' + FENCE + '\n' + f.content.replace(/\x60{3}/g, "'''") + '\n' + FENCE; });
     if (loopOn && text.charAt(0) !== '/' && text.charAt(0) !== '!') text = '/loop ' + text;
+    var images = attached.filter(function (f) { return f.image; }).map(function (f) { return { name: f.name, media: f.image.media, data: f.image.data }; });
     if (state.busy) {
+      if (images.length) { note('warn', 'Сообщение с изображением можно отправить, когда закончится текущая задача.'); return; }
       queued = queued ? queued + '\n\n' + text : text;
       input.value = ''; attached = []; drawFiles(); grow(); drawQueued();
       return;
     }
     $('send').disabled = true;
-    sendText(text).then(function (ok) {
+    sendText(text, images).then(function (ok) {
       $('send').disabled = false;
       if (!ok) return;
       input.value = ''; attached = []; drawFiles(); grow();
@@ -1205,14 +1214,36 @@ textarea.input { padding: 10px 14px; min-height: 96px; resize: vertical; line-he
     box.textContent = '';
     box.hidden = !attached.length;
     attached.forEach(function (f, i) {
-      var chip = el('span', 'file-chip', f.name + ' · ' + Math.max(1, Math.round(f.content.length / 1024)) + ' КБ');
+      var chip = el('span', 'file-chip', f.image ? 'Изображение: ' + f.name : f.name + ' · ' + Math.max(1, Math.round(f.content.length / 1024)) + ' КБ');
       var x = el('button', '', '×'); x.type = 'button'; x.setAttribute('aria-label', 'Убрать ' + f.name);
       x.onclick = function () { attached.splice(i, 1); drawFiles(); };
       chip.appendChild(x); box.appendChild(chip);
     });
   }
+  // Изображение уменьшается до разумного размера прямо здесь: так оно быстрее читается моделью
+  function readImage(file) {
+    var url = URL.createObjectURL(file), img = new Image();
+    img.onload = function () {
+      var max = 1568, scale = Math.min(1, max / Math.max(img.naturalWidth, img.naturalHeight));
+      var canvas = document.createElement('canvas');
+      canvas.width = Math.max(1, Math.round(img.naturalWidth * scale)); canvas.height = Math.max(1, Math.round(img.naturalHeight * scale));
+      var g = canvas.getContext('2d');
+      g.fillStyle = '#fff'; g.fillRect(0, 0, canvas.width, canvas.height); // прозрачный фон в JPEG стал бы чёрным
+      g.drawImage(img, 0, 0, canvas.width, canvas.height);
+      URL.revokeObjectURL(url);
+      var data = canvas.toDataURL('image/jpeg', 0.86);
+      attached.push({ name: file.name || 'изображение.jpg', content: '', image: { media: 'image/jpeg', data: data.slice(data.indexOf(',') + 1) } });
+      drawFiles();
+    };
+    img.onerror = function () { URL.revokeObjectURL(url); note('error', 'Не удалось открыть изображение ' + file.name); };
+    img.src = url;
+  }
   function readFiles(list) {
     Array.prototype.forEach.call(list, function (file) {
+      if (/^image\//.test(file.type)) {
+        if (attached.filter(function (f) { return f.image; }).length >= 6) { note('warn', 'К одному сообщению можно приложить до шести изображений.'); return; }
+        readImage(file); return;
+      }
       if (file.size > 300 * 1024) { note('warn', file.name + ': файл больше 300 КБ. Положите его в папку проекта и назовите в задаче — агент прочитает сам.'); return; }
       var reader = new FileReader();
       reader.onload = function () {

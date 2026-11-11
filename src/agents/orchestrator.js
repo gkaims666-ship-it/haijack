@@ -47,6 +47,22 @@ export class Orchestrator {
       solo: mk('solo', TOOLSETS.all),
     };
     this.#loadDialog();
+    this.setImages([]);
+  }
+
+  /**
+   * Изображения к следующей задаче. Их получают агенты, которые читают задачу и пишут код
+   * (Architect, Coder, ассистент) — каждый один раз, вместе с первым сообщением.
+   */
+  setImages(images) {
+    const served = new Set();
+    for (const [role, agent] of Object.entries(this.agents)) {
+      agent.takeImages = () => {
+        if (!images.length || served.has(role) || role === 'reviewer' || role === 'executor') return [];
+        served.add(role);
+        return images;
+      };
+    }
   }
 
   resetAll() {
@@ -60,7 +76,9 @@ export class Orchestrator {
   #saveDialog() {
     if (!this.dialogFile) return;
     try {
-      let messages = this.agents.solo.messages;
+      // Изображения на диск не пишутся: в сохранённом диалоге от них остаётся пометка
+      let messages = this.agents.solo.messages.map((m) => (Array.isArray(m.content) && m.content.some((b) => b.type === 'image')
+        ? { ...m, content: m.content.map((b) => (b.type === 'image' ? { type: 'text', text: '[здесь было изображение]' } : b)) } : m));
       if (!messages.length) { fs.rmSync(this.dialogFile, { force: true }); return; }
       // Слишком длинный диалог сохраняется с более позднего места — обязательно с обычной реплики пользователя,
       // иначе история начнётся с результата инструмента без вызова, и API её не примет

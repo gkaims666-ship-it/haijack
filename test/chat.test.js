@@ -207,3 +207,35 @@ test('веб: чаты — новый, переключение, удалени�
     await app.close(); mock.server.close();
   }
 });
+
+test('изображения: уходят модели в формате её сервера, не пишутся на диск; модель без зрения получает текст', async () => {
+  const PIXEL = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==';
+  const messages = [{ role: 'user', content: [{ type: 'image', source: { type: 'base64', media_type: 'image/png', data: PIXEL } }, { type: 'text', text: 'что на картинке?' }] }];
+  const client = new OpenAIClient({ local: { baseUrl: 'http://x/v1', numCtx: 8192 } });
+  const req = { model: 'm', system: 'sys', messages, tools: [], maxTokens: 100 };
+  assert.deepEqual(client.buildOllamaBody(req).messages[1], { role: 'user', content: 'что на картинке?', images: [PIXEL] });
+  assert.deepEqual(client.buildBody(req).messages[1].content, [{ type: 'text', text: 'что на картинке?' }, { type: 'image_url', image_url: { url: `data:image/png;base64,${PIXEL}` } }]);
+  client.textTools.add('m'); // текстовый режим инструментов изображения не теряет
+  assert.deepEqual(client.buildOllamaBody(req).messages[1].images, [PIXEL]);
+  client.noVision.add('m');
+  assert.deepEqual(client.buildOllamaBody(req).messages[1], { role: 'user', content: 'что на картинке?' });
+  assert.equal(client.buildBody(req).messages[1].content, 'что на картинке?');
+
+  const mock = await startOpenAIMock();
+  const app = await open(localCfg(mock));
+  try {
+    assert.equal((await app.post('/api/input', { text: 'x', images: [{ name: 'a.svg', media: 'image/svg+xml', data: PIXEL }] })).status, 400);
+    assert.equal((await app.post('/api/input', { text: 'что на картинке?', images: [{ name: 'shot.png', media: 'image/png', data: PIXEL }] })).status, 202);
+    await app.idle();
+    const first = mock.requests[0].body.messages.find((m) => m.role === 'user' && m.images);
+    assert.deepEqual(first.images, [PIXEL]);
+    const shown = app.web.hub.buffer.find((e) => e.t === 'user' && e.text === 'что на картинке?');
+    assert.deepEqual(shown.images, ['shot.png']);
+    assert.doesNotMatch(fs.readFileSync(app.web.hub.file, 'utf8'), new RegExp(PIXEL.slice(0, 40)));
+    // Следующая задача изображение уже не получает
+    const mark = mock.requests.length;
+    await app.post('/api/input', { text: 'ещё вопрос' });
+    await app.idle();
+    assert.ok(mock.requests.slice(mark).every((r) => r.body.messages.every((m) => !m.images)));
+  } finally { await app.close(); mock.server.close(); }
+});
