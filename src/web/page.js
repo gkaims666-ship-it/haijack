@@ -12,18 +12,18 @@ export const PAGE = String.raw`<!doctype html>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
 <meta name="color-scheme" content="dark">
-<meta name="theme-color" content="#0C0C0E">
+<meta name="theme-color" content="#06080D">
 <title>haijack</title>
-<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 48 48'%3E%3Crect width='48' height='48' rx='12' fill='%230C0C0E'/%3E%3Cg transform='skewX(-14) translate(6 0)'%3E%3Crect x='10' y='12' width='26' height='4.6' rx='2.3' fill='%23FF4F8B'/%3E%3Crect x='13' y='19' width='19' height='4.6' rx='2.3' fill='%23FF7B47'/%3E%3Crect x='11' y='26' width='23' height='4.6' rx='2.3' fill='%23FFAE3B'/%3E%3Crect x='16' y='33' width='13' height='4.6' rx='2.3' fill='%23F2DC4A'/%3E%3C/g%3E%3C/svg%3E">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 48 48'%3E%3Crect width='48' height='48' rx='12' fill='%2306080D'/%3E%3Cg fill='none' stroke-width='5.2' stroke-linecap='round' transform='translate(1.5 0)'%3E%3Cpath stroke='%239B7BFF' d='M14 8V34'/%3E%3Cpath stroke='%235C8DFF' d='M14 25C14 16 31 15 31 24'/%3E%3Cpath stroke='%233FC8F4' d='M31 24V35C31 41 26 43 20.5 41.5'/%3E%3C/g%3E%3Ccircle cx='32.5' cy='9.5' r='3.1' fill='%236FF0D8'/%3E%3C/svg%3E">
 <style>
 :root {
-  /* Основа — нейтральный графит без синевы; весь цвет несёт одна тёплая линия: от малинового к жёлтому */
-  --bg: #0C0C0E; --panel: #141417; --raised: #1B1B20; --hover: #24242A;
-  --line: rgba(255, 255, 255, .07); --line-strong: rgba(255, 255, 255, .14);
-  --text: #F4F3F6; --muted: #A09FAC; --faint: #6A6975;
-  --architect: #FF4F8B; --coder: #FF7B47; --reviewer: #FFAE3B; --executor: #F2DC4A; --solo: #FF8F5A;
-  --ok: #5BE49B; --warn: #FFAE3B; --error: #FF6B6B; --add: #7BE8A9; --del: #FF8A8A; --link: #FFB978;
-  --brand: linear-gradient(100deg, #FF4F8B 0%, #FF7B47 42%, #FFAE3B 74%, #F2DC4A 100%);
+  /* Холодная гамма: глубокий сине-чёрный фон и одна линия цвета — от фиолетового через синий к ледяной мяте */
+  --bg: #06080D; --panel: #0C1118; --raised: #141B25; --hover: #1C2532;
+  --line: rgba(150, 180, 255, .09); --line-strong: rgba(150, 180, 255, .17);
+  --text: #EDF2FA; --muted: #94A1B5; --faint: #5D6A7E;
+  --architect: #9B7BFF; --coder: #5C8DFF; --reviewer: #3FC8F4; --executor: #6FF0D8; --solo: #6FA8FF;
+  --ok: #5FE3A6; --warn: #F2C66D; --error: #FF6B88; --add: #7BE8B5; --del: #FF8FA3; --link: #7CC4FF;
+  --brand: linear-gradient(100deg, #9B7BFF 0%, #5C8DFF 42%, #3FC8F4 74%, #6FF0D8 100%);
   --sans: system-ui, -apple-system, "Segoe UI Variable Text", "Segoe UI", Roboto, "Noto Sans", sans-serif;
   --mono: ui-monospace, "Cascadia Code", "Cascadia Mono", "SF Mono", "Roboto Mono", Menlo, Consolas, monospace;
   --radius: 14px;
@@ -35,38 +35,34 @@ body {
   display: flex; flex-direction: column; height: 100dvh; overflow: hidden;
   -webkit-text-size-adjust: 100%; -webkit-font-smoothing: antialiased;
 }
-/* Едва заметное тёплое свечение сверху: даёт глубину, не отвлекая от текста */
+/* Едва заметное холодное свечение сверху: даёт глубину, не отвлекая от текста */
 body::before { content: ""; position: fixed; inset: 0 0 auto 0; height: 46vh; pointer-events: none; z-index: 0;
-  background: radial-gradient(55% 90% at 12% -10%, rgba(255, 79, 139, .10), transparent 70%), radial-gradient(50% 80% at 92% -14%, rgba(255, 174, 59, .08), transparent 70%); }
+  background: radial-gradient(55% 90% at 12% -10%, rgba(155, 123, 255, .10), transparent 70%), radial-gradient(50% 80% at 92% -14%, rgba(63, 200, 244, .08), transparent 70%); }
 header, main, footer { position: relative; z-index: 1; }
 button, select, textarea, input { font: inherit; color: inherit; }
 button { cursor: pointer; background: none; border: 0; padding: 0; }
 a { color: var(--link); text-underline-offset: 3px; text-decoration-thickness: 1px; }
 :focus-visible { outline: 2px solid var(--coder); outline-offset: 2px; border-radius: 8px; }
 [hidden] { display: none !important; }
-::selection { background: rgba(255, 123, 71, .32); }
-* { scrollbar-width: thin; scrollbar-color: rgba(255, 255, 255, .14) transparent; }
+::selection { background: rgba(92, 141, 255, .32); }
+* { scrollbar-width: thin; scrollbar-color: rgba(150, 180, 255, .17) transparent; }
 .wrap { width: 100%; max-width: 820px; margin: 0 auto; padding-left: max(18px, env(safe-area-inset-left)); padding-right: max(18px, env(safe-area-inset-right)); }
 
-/* ---------- знак: четыре наклонные полосы, от малиновой к жёлтой ---------- */
-.mark { display: grid; gap: 3px; width: 24px; flex: none; transform: skewX(-14deg); }
-.mark i { display: block; height: 4px; border-radius: 2px; }
-.mark i:nth-child(1) { background: var(--architect); width: 100%; }
-.mark i:nth-child(2) { background: var(--coder); width: 74%; margin-left: 13%; }
-.mark i:nth-child(3) { background: var(--reviewer); width: 88%; margin-left: 6%; }
-.mark i:nth-child(4) { background: var(--executor); width: 50%; margin-left: 25%; }
-.mark.big { width: 64px; gap: 8px; }
-.mark.big i { height: 9px; border-radius: 5px; }
+/* ---------- знак: буквы h и j одной линией — стойка, арка, хвост и точка, по цвету на агента ---------- */
+.logo { width: 26px; height: 26px; flex: none; overflow: visible; }
+.logo path { fill: none; stroke-width: 5.2; stroke-linecap: round; stroke-linejoin: round; }
+.logo .l1 { stroke: var(--architect); } .logo .l2 { stroke: var(--coder); } .logo .l3 { stroke: var(--reviewer); } .logo .l4 { fill: var(--executor); }
+.logo.big { width: 76px; height: 76px; margin-left: -8px; filter: drop-shadow(0 0 22px rgba(92, 141, 255, .35)); }
 .wordmark { font-weight: 720; letter-spacing: -0.035em; background: var(--brand); -webkit-background-clip: text; background-clip: text; color: transparent; }
 
 /* ---------- кнопки и поля ---------- */
 .btn { display: inline-flex; align-items: center; justify-content: center; gap: 8px; min-height: 42px; padding: 0 18px; border-radius: 12px; border: 1px solid var(--line-strong); background: transparent; font-weight: 560; white-space: nowrap; transition: background .14s, border-color .14s, transform .08s; }
 .btn:hover { background: var(--raised); }
 .btn:active { transform: scale(.98); }
-.btn.primary { background: var(--brand); color: #1B0D09; border: 0; font-weight: 650; }
+.btn.primary { background: var(--brand); color: #04121C; border: 0; font-weight: 650; }
 .btn.primary:hover { filter: brightness(1.08); background: var(--brand); }
 .btn.danger { background: transparent; border-color: var(--error); color: var(--error); }
-.btn.danger:hover { background: rgba(255, 107, 107, .1); }
+.btn.danger:hover { background: rgba(255, 107, 136, .1); }
 .btn.quiet { border-color: transparent; color: var(--muted); }
 .btn.quiet:hover { background: var(--raised); color: var(--text); }
 .btn.small { min-height: 34px; padding: 0 13px; font-size: 13.5px; border-radius: 10px; }
@@ -92,20 +88,22 @@ select option { background: var(--panel); color: var(--text); }
 .switch input { appearance: none; -webkit-appearance: none; flex: none; width: 42px; height: 24px; border-radius: 12px; background: var(--hover); position: relative; margin: 1px 0 0; transition: background .16s; cursor: pointer; }
 .switch input::after { content: ""; position: absolute; top: 3px; left: 3px; width: 18px; height: 18px; border-radius: 50%; background: var(--muted); transition: transform .16s, background .16s; }
 .switch input:checked { background: var(--brand); }
-.switch input:checked::after { transform: translateX(18px); background: #1B0D09; }
+.switch input:checked::after { transform: translateX(18px); background: #04121C; }
 .switch b { display: block; font-weight: 560; } .switch small { color: var(--muted); font-size: 13px; line-height: 1.45; display: block; margin-top: 2px; }
 
 /* ---------- экран входа ---------- */
 #login { position: fixed; inset: 0; z-index: 30; background: var(--bg); overflow-y: auto; display: grid; place-items: center; padding: 28px 18px; }
 #login::before { content: ""; position: fixed; inset: 0; pointer-events: none;
-  background: radial-gradient(60% 55% at 18% 0%, rgba(255, 79, 139, .20), transparent 70%), radial-gradient(55% 50% at 88% 6%, rgba(255, 174, 59, .15), transparent 70%), radial-gradient(70% 45% at 50% 108%, rgba(242, 220, 74, .07), transparent 70%); }
+  background: radial-gradient(60% 55% at 18% 0%, rgba(155, 123, 255, .20), transparent 70%), radial-gradient(55% 50% at 88% 6%, rgba(63, 200, 244, .15), transparent 70%), radial-gradient(70% 45% at 50% 108%, rgba(111, 240, 216, .07), transparent 70%); }
 .login-card { position: relative; width: 100%; max-width: 420px; }
-.login-card h1 { margin: 26px 0 8px; font-size: 52px; line-height: 1; }
+.login-card h1 { margin: 14px 0 8px; font-size: 52px; line-height: 1; }
 .login-card .lede { margin: 0 0 30px; color: var(--muted); font-size: 16px; max-width: 30ch; }
-.login-card .mark.big i { transform-origin: left; animation: lay .75s cubic-bezier(.2, .7, .2, 1) both; }
-.login-card .mark.big i:nth-child(2) { animation-delay: .07s; } .login-card .mark.big i:nth-child(3) { animation-delay: .14s; } .login-card .mark.big i:nth-child(4) { animation-delay: .21s; }
-@keyframes lay { from { transform: scaleX(0); opacity: 0; } to { transform: scaleX(1); opacity: 1; } }
-.login-card form { background: rgba(20, 20, 23, .72); -webkit-backdrop-filter: blur(18px); backdrop-filter: blur(18px); border: 1px solid var(--line); border-radius: 22px; padding: 20px; }
+.logo.big path { stroke-dasharray: 1; stroke-dashoffset: 1; animation: draw .7s cubic-bezier(.3, .7, .2, 1) forwards; }
+.logo.big .l2 { animation-delay: .22s; } .logo.big .l3 { animation-delay: .44s; }
+.logo.big .l4 { opacity: 0; animation: pop .3s ease-out .8s forwards; }
+@keyframes draw { to { stroke-dashoffset: 0; } }
+@keyframes pop { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
+.login-card form { background: rgba(12, 17, 24, .72); -webkit-backdrop-filter: blur(18px); backdrop-filter: blur(18px); border: 1px solid var(--line); border-radius: 22px; padding: 20px; }
 .login-card .btn.primary { width: 100%; margin-top: 20px; min-height: 48px; border-radius: 14px; }
 .login-foot { margin-top: 18px; color: var(--faint); font-size: 12.5px; line-height: 1.5; overflow-wrap: anywhere; }
 
@@ -151,7 +149,7 @@ main { flex: 1; overflow-y: auto; overscroll-behavior: contain; }
 .say .who { display: flex; align-items: center; font-size: 12.5px; font-weight: 600; color: var(--hue); margin-bottom: 5px; }
 .say .body { overflow-wrap: anywhere; }
 .say .body.raw { white-space: pre-wrap; }
-.tile { display: inline-grid; place-items: center; width: 20px; height: 20px; border-radius: 7px; margin-right: 8px; flex: none; font: 700 11px/1 var(--sans); color: #1B0D09; background: var(--hue); }
+.tile { display: inline-grid; place-items: center; width: 20px; height: 20px; border-radius: 7px; margin-right: 8px; flex: none; font: 700 11px/1 var(--sans); color: #04121C; background: var(--hue); }
 .md > :first-child { margin-top: 0; } .md > :last-child { margin-bottom: 0; }
 .md p { margin: 0 0 11px; white-space: pre-wrap; } .md ul, .md ol { margin: 0 0 11px; padding-left: 22px; } .md li { margin: 3px 0; }
 .md li::marker { color: var(--faint); }
@@ -159,14 +157,14 @@ main { flex: 1; overflow-y: auto; overscroll-behavior: contain; }
 .md h1 { font-size: 20px; } .md h2 { font-size: 17.5px; } .md h3 { font-size: 15.5px; }
 .md blockquote { margin: 0 0 11px; padding: 2px 0 2px 14px; border-left: 2px solid var(--line-strong); color: var(--muted); }
 .md hr { border: 0; border-top: 1px solid var(--line); margin: 16px 0; }
-.md code { font: 13px/1.4 var(--mono); background: rgba(255, 255, 255, .07); border-radius: 6px; padding: 2px 6px; }
+.md code { font: 13px/1.4 var(--mono); background: rgba(150, 180, 255, .09); border-radius: 6px; padding: 2px 6px; }
 .md .verdict { font-weight: 660; }
-.code { margin: 0 0 13px; border-radius: 14px; overflow: hidden; background: #111114; border: 1px solid var(--line); }
+.code { margin: 0 0 13px; border-radius: 14px; overflow: hidden; background: #0A0E14; border: 1px solid var(--line); }
 .code .head { display: flex; align-items: center; justify-content: space-between; padding: 5px 6px 5px 14px; color: var(--faint); font: 12px/1 var(--mono); }
 .code pre { margin: 0; padding: 4px 14px 14px; overflow-x: auto; font: 13px/1.6 var(--mono); white-space: pre; }
 .copy { font: 12px/1 var(--sans); color: var(--faint); padding: 7px 10px; border-radius: 8px; transition: background .14s, color .14s; }
 .copy:hover { background: var(--raised); color: var(--text); }
-.tok-c { color: var(--faint); font-style: italic; } .tok-s { color: #FFD79A; } .tok-n { color: var(--executor); } .tok-k { color: #FF85AE; }
+.tok-c { color: var(--faint); font-style: italic; } .tok-s { color: #9FE8D5; } .tok-n { color: var(--executor); } .tok-k { color: #B49BFF; }
 .code pre .add, .msg.pre .add { color: var(--add); } .code pre .del, .msg.pre .del { color: var(--del); } .code pre .hunk, .msg.pre .hunk { color: var(--faint); } .msg.pre .file { color: var(--text); font-weight: 600; }
 
 /* Блок действий: одна тихая строка, раскрывается по нажатию */
@@ -185,28 +183,28 @@ main { flex: 1; overflow-y: auto; overscroll-behavior: contain; }
 .tool .name { color: var(--hue); font-weight: 600; }
 .tool .res { color: var(--faint); overflow-wrap: anywhere; }
 .tool .res.ok { color: var(--ok); } .tool .res.warn { color: var(--warn); } .tool .res.error { color: var(--error); }
-.out { margin: 6px 0; padding: 9px 12px; background: #111114; border-radius: 10px; color: var(--muted); font: 12.5px/1.5 var(--mono); white-space: pre-wrap; overflow-wrap: anywhere; max-height: 240px; overflow-y: auto; }
+.out { margin: 6px 0; padding: 9px 12px; background: #0A0E14; border-radius: 10px; color: var(--muted); font: 12.5px/1.5 var(--mono); white-space: pre-wrap; overflow-wrap: anywhere; max-height: 240px; overflow-y: auto; }
 .msg { margin: 8px 0; color: var(--muted); white-space: pre-wrap; overflow-wrap: anywhere; font-size: 14px; }
 .msg.warn { color: var(--warn); } .msg.error { color: var(--error); } .msg.ok { color: var(--ok); }
-.msg.pre { font: 13px/1.55 var(--mono); background: #111114; border: 1px solid var(--line); border-radius: 14px; padding: 14px; color: var(--text); overflow-x: auto; white-space: pre; }
+.msg.pre { font: 13px/1.55 var(--mono); background: #0A0E14; border: 1px solid var(--line); border-radius: 14px; padding: 14px; color: var(--text); overflow-x: auto; white-space: pre; }
 .thinking { display: flex; align-items: center; gap: 12px; margin: 12px 0; color: var(--faint); font-size: 13.5px; }
 .thinking i { width: 34px; height: 3px; border-radius: 2px; background: var(--brand); background-size: 220% 100%; animation: slide 1.3s ease-in-out infinite alternate; }
 @keyframes slide { to { background-position: 100% 0; } }
 
 .ask { margin: 12px 0; background: var(--panel); border: 1px solid var(--line-strong); border-radius: 18px; padding: 16px; }
 .tool .ask { margin: 10px 0; font: 15px/1.55 var(--sans); }
-.ask.danger { border-color: rgba(255, 107, 107, .55); }
+.ask.danger { border-color: rgba(255, 107, 136, .55); }
 .ask.closed { border-color: var(--line); background: transparent; }
 .ask h3 { margin: 0; font-size: 15px; font-weight: 600; overflow-wrap: anywhere; }
 .ask .meta { color: var(--faint); font-size: 13px; margin-bottom: 2px; }
 .ask .danger-note { color: var(--error); font-weight: 600; font-size: 13.5px; margin-top: 4px; }
-.ask .detail { font: 12.5px/1.55 var(--mono); background: #0E0E10; border-radius: 10px; padding: 10px 12px; margin: 12px 0 0; max-height: 300px; overflow: auto; white-space: pre; }
+.ask .detail { font: 12.5px/1.55 var(--mono); background: #080B10; border-radius: 10px; padding: 10px 12px; margin: 12px 0 0; max-height: 300px; overflow: auto; white-space: pre; }
 .ask .detail .add { color: var(--add); } .ask .detail .del { color: var(--del); } .ask .detail .hunk { color: var(--faint); }
 .ask .row { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 14px; }
 .ask .verdict { margin-top: 8px; color: var(--faint); font-size: 13px; }
 
 .summary { margin: 22px 0 8px; background: var(--panel); border-radius: 18px; overflow: hidden; position: relative; }
-.summary::before { content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 3px; background: linear-gradient(180deg, #FF4F8B, #FF7B47, #FFAE3B, #F2DC4A); }
+.summary::before { content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 3px; background: linear-gradient(180deg, #9B7BFF, #5C8DFF, #3FC8F4, #6FF0D8); }
 .summary dl { margin: 0; padding: 16px 18px 16px 20px; display: grid; grid-template-columns: max-content 1fr; gap: 7px 18px; }
 .summary dt { color: var(--faint); } .summary dd { margin: 0; overflow-wrap: anywhere; }
 .summary .files { font: 13px/1.55 var(--mono); white-space: pre-wrap; }
@@ -218,7 +216,7 @@ main { flex: 1; overflow-y: auto; overscroll-behavior: contain; }
 /* ---------- ввод: одна парящая панель ---------- */
 footer { flex: none; padding-top: 6px; padding-bottom: max(12px, env(safe-area-inset-bottom)); }
 .composer { background: var(--panel); border: 1px solid var(--line-strong); border-radius: 22px; padding: 10px 10px 8px; box-shadow: 0 18px 50px -24px rgba(0, 0, 0, .9); transition: border-color .18s, box-shadow .18s; }
-.composer:focus-within { border-color: rgba(255, 123, 71, .5); box-shadow: 0 18px 50px -24px rgba(0, 0, 0, .9), 0 0 0 4px rgba(255, 123, 71, .08); }
+.composer:focus-within { border-color: rgba(92, 141, 255, .5); box-shadow: 0 18px 50px -24px rgba(0, 0, 0, .9), 0 0 0 4px rgba(92, 141, 255, .08); }
 #input { display: block; width: 100%; resize: none; background: transparent; border: 0; outline: none; padding: 6px 10px 10px; max-height: 38dvh; line-height: 1.55; font-size: 15.5px; }
 .files-row { display: flex; flex-wrap: wrap; gap: 6px; padding: 2px 6px 8px; }
 .file-chip { display: inline-flex; align-items: center; gap: 6px; padding: 3px 4px 3px 11px; border-radius: 9px; background: var(--raised); font: 12.5px/1.4 var(--mono); }
@@ -230,16 +228,16 @@ footer { flex: none; padding-top: 6px; padding-bottom: max(12px, env(safe-area-i
 /* Переключатели без рамок: в покое это просто слова, включённый подсвечен цветом */
 .chip { display: inline-flex; align-items: center; gap: 6px; min-height: 34px; padding: 0 11px; flex: none; border-radius: 10px; color: var(--faint); font-size: 13px; white-space: nowrap; transition: background .14s, color .14s; }
 .chip:hover { color: var(--text); background: var(--raised); }
-.chip[aria-pressed="true"] { color: var(--coder); background: rgba(255, 123, 71, .12); }
-.chip.self[aria-pressed="true"] { color: var(--architect); background: rgba(255, 79, 139, .12); }
-.chip.loop[aria-pressed="true"] { color: var(--executor); background: rgba(242, 220, 74, .10); }
+.chip[aria-pressed="true"] { color: var(--coder); background: rgba(92, 141, 255, .12); }
+.chip.self[aria-pressed="true"] { color: var(--architect); background: rgba(155, 123, 255, .12); }
+.chip.loop[aria-pressed="true"] { color: var(--executor); background: rgba(111, 240, 216, .10); }
 select.chip { appearance: none; -webkit-appearance: none; background: transparent; border: 0; color: var(--muted); }
 .btn.send { min-height: 40px; border-radius: 13px; padding: 0 16px; }
 .foot { display: flex; justify-content: space-between; gap: 12px; color: var(--faint); font-size: 12px; padding: 7px 10px 0; min-height: 20px; }
 #net { color: var(--error); }
 
 /* ---------- панели ---------- */
-.scrim { position: fixed; inset: 0; z-index: 20; background: rgba(6, 6, 8, .62); -webkit-backdrop-filter: blur(3px); backdrop-filter: blur(3px); }
+.scrim { position: fixed; inset: 0; z-index: 20; background: rgba(3, 5, 9, .66); -webkit-backdrop-filter: blur(3px); backdrop-filter: blur(3px); }
 .sheet { position: fixed; z-index: 21; top: 0; right: 0; bottom: 0; width: min(100%, 460px); background: var(--panel); border-left: 1px solid var(--line); display: flex; flex-direction: column; animation: sheet .2s cubic-bezier(.2, .7, .2, 1); }
 @keyframes sheet { from { transform: translateX(28px); opacity: 0; } to { transform: none; opacity: 1; } }
 .sheet-head { display: flex; align-items: center; justify-content: space-between; padding: max(14px, env(safe-area-inset-top)) 12px 10px 22px; }
@@ -272,6 +270,71 @@ button.cat-item:hover { padding-left: 8px; }
 .pull .line { display: flex; justify-content: space-between; gap: 12px; color: var(--muted); font-size: 13px; }
 .pull .row { display: flex; gap: 8px; margin-top: 12px; flex-wrap: wrap; }
 
+/* ---------- реплики: действия, размышления, сведения об ответе ---------- */
+.user-row { display: flex; flex-direction: column; align-items: flex-end; margin: 28px 0 12px; }
+.user-row .user { margin: 0; }
+.acts-line { display: flex; align-items: center; flex-wrap: wrap; gap: 2px; min-height: 26px; margin-top: 4px; color: var(--faint); font-size: 12px; }
+.acts-line .stat { margin-right: 8px; font-variant-numeric: tabular-nums; }
+.mini { color: var(--faint); font-size: 12px; padding: 4px 8px; border-radius: 7px; transition: background .14s, color .14s, opacity .14s; }
+.mini:hover { background: var(--raised); color: var(--text); }
+.user-row .acts-line, .say .acts-line .mini { opacity: 0; transition: opacity .16s; }
+.user-row:hover .acts-line, .user-row:focus-within .acts-line, .say:hover .acts-line .mini, .say:focus-within .acts-line .mini { opacity: 1; }
+@media (pointer: coarse) { .user-row .acts-line, .say .acts-line .mini { opacity: 1; } }
+.think { margin: 8px 0; }
+.think > summary { list-style: none; cursor: pointer; display: inline-flex; align-items: center; gap: 8px; color: var(--faint); font-size: 13px; user-select: none; }
+.think > summary::-webkit-details-marker { display: none; }
+.think > summary::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: var(--hue, var(--muted)); opacity: .7; }
+.think.live > summary::before { animation: carry 1.2s ease-in-out infinite; opacity: 1; }
+.think > summary:hover { color: var(--muted); }
+.think .think-body { margin: 6px 0 4px 3px; padding: 2px 0 2px 14px; border-left: 1px solid var(--line-strong); color: var(--muted); font-size: 13.5px; line-height: 1.55; white-space: pre-wrap; overflow-wrap: anywhere; max-height: 260px; overflow-y: auto; }
+.md table { border-collapse: collapse; margin: 0 0 13px; font-size: 14px; display: block; overflow-x: auto; max-width: 100%; }
+.md th, .md td { border-bottom: 1px solid var(--line); padding: 7px 14px 7px 0; text-align: left; vertical-align: top; }
+.md th, .md td { overflow-wrap: normal; word-break: normal; min-width: 5.5em; }
+.md th { color: var(--muted); font-weight: 600; border-bottom-color: var(--line-strong); white-space: nowrap; }
+.md del { color: var(--faint); }
+.code .head .btns { display: flex; gap: 2px; }
+
+/* ---------- кнопка «вниз», подсказка команд, очередь, перетаскивание ---------- */
+footer .wrap { position: relative; }
+.jump { position: absolute; right: max(18px, env(safe-area-inset-right)); top: -46px; width: 36px; height: 36px; border-radius: 50%; background: var(--raised); border: 1px solid var(--line-strong); color: var(--muted); display: grid; place-items: center; box-shadow: 0 8px 24px -8px rgba(0, 0, 0, .8); }
+.jump:hover { color: var(--text); background: var(--hover); }
+.jump svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+.menu { position: absolute; left: max(18px, env(safe-area-inset-left)); right: max(18px, env(safe-area-inset-right)); bottom: calc(100% + 2px); z-index: 5; max-height: min(52vh, 420px); overflow-y: auto; background: var(--panel); border: 1px solid var(--line-strong); border-radius: 16px; padding: 6px; box-shadow: 0 24px 60px -18px rgba(0, 0, 0, .9); }
+.menu-item { display: flex; align-items: baseline; gap: 12px; width: 100%; text-align: left; padding: 8px 10px; border-radius: 10px; color: var(--muted); }
+.menu-item:hover, .menu-item.sel { background: var(--raised); color: var(--text); }
+.menu-item b { font: 600 13px/1.4 var(--mono); color: var(--text); white-space: nowrap; }
+.menu-item span { font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.menu-head { padding: 8px 10px 4px; color: var(--faint); font-size: 12px; }
+.menu-foot { display: flex; gap: 4px; padding: 6px 4px 2px; border-top: 1px solid var(--line); margin-top: 6px; }
+.model-item { display: grid; grid-template-columns: 18px 1fr auto; align-items: center; gap: 10px; width: 100%; text-align: left; padding: 10px; border-radius: 10px; }
+.model-item:hover { background: var(--raised); }
+.model-item .tick { color: var(--executor); font-weight: 700; }
+.model-item .nm { font: 13px/1.4 var(--mono); overflow-wrap: anywhere; min-width: 0; }
+.model-item .nm small { display: block; font: 12px/1.4 var(--sans); color: var(--faint); margin-top: 2px; }
+.model-item .st { font-size: 12px; color: var(--faint); white-space: nowrap; }
+.model-item .st.on { color: var(--ok); }
+.chip.model { max-width: min(46vw, 230px); color: var(--muted); }
+.chip.model span { overflow: hidden; text-overflow: ellipsis; }
+.chip.model .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--faint); flex: none; }
+.chip.model[data-state="ready"] .dot { background: var(--ok); box-shadow: 0 0 8px var(--ok); }
+.chip.model[data-state="loading"] .dot { background: var(--reviewer); animation: carry 1s ease-in-out infinite; }
+.chip.model[data-state="error"] .dot { background: var(--error); }
+.queued { display: flex; align-items: center; gap: 8px; padding: 2px 6px 8px 10px; color: var(--muted); font-size: 13px; }
+.queued span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; flex: 1; }
+.composer.drop { border-color: var(--reviewer); box-shadow: 0 0 0 4px rgba(63, 200, 244, .12); }
+#model-status.error { color: var(--error); }
+
+/* ---------- список чатов ---------- */
+.sheet.left { right: auto; left: 0; border-left: 0; border-right: 1px solid var(--line); width: min(100%, 340px); animation-name: sheet-left; }
+@keyframes sheet-left { from { transform: translateX(-28px); opacity: 0; } to { transform: none; opacity: 1; } }
+.chat-item { display: flex; align-items: center; gap: 6px; padding: 2px 4px 2px 0; border-radius: 12px; }
+.chat-item:hover, .chat-item.current { background: var(--raised); }
+.chat-item .open { flex: 1; min-width: 0; text-align: left; padding: 10px 12px; }
+.chat-item .open b { display: block; font-weight: 520; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.chat-item .open small { color: var(--faint); font-size: 12px; }
+.chat-item.current .open b { color: var(--reviewer); }
+textarea.input { padding: 10px 14px; min-height: 96px; resize: vertical; line-height: 1.5; }
+
 @media (max-width: 720px) {
   .team { grid-template-columns: repeat(2, 1fr); row-gap: 12px; }
   .team div:nth-child(3) { padding-left: 0; }
@@ -290,7 +353,7 @@ button.cat-item:hover { padding-left: 8px; }
 
 <section id="login" hidden aria-labelledby="login-title">
   <div class="login-card">
-    <div class="mark big" aria-hidden="true"><i></i><i></i><i></i><i></i></div>
+    <svg class="logo big" viewBox="0 0 48 48" aria-hidden="true"><path class="l1" pathLength="1" d="M14 8V34"/><path class="l2" pathLength="1" d="M14 25C14 16 31 15 31 24"/><path class="l3" pathLength="1" d="M31 24V35C31 41 26 43 20.5 41.5"/><circle class="l4" cx="31" cy="9.5" r="3.1"/></svg>
     <h1 id="login-title" class="wordmark">haijack</h1>
     <p class="lede">Четыре агента планируют, пишут, проверяют и запускают код — на вашем устройстве.</p>
     <form id="login-form" autocomplete="off">
@@ -336,12 +399,14 @@ button.cat-item:hover { padding-left: 8px; }
 
 <header><div class="wrap">
   <div class="bar">
+    <button class="icon-btn" id="open-chats" title="Чаты" aria-label="Чаты"><svg viewBox="0 0 24 24"><path d="M4 6.5h16M4 12h11M4 17.5h16"/></svg></button>
     <div class="brand">
-      <div class="mark" aria-hidden="true"><i></i><i></i><i></i><i></i></div>
+      <svg class="logo" viewBox="0 0 48 48" aria-hidden="true"><path class="l1" pathLength="1" d="M14 8V34"/><path class="l2" pathLength="1" d="M14 25C14 16 31 15 31 24"/><path class="l3" pathLength="1" d="M31 24V35C31 41 26 43 20.5 41.5"/><circle class="l4" cx="31" cy="9.5" r="3.1"/></svg>
       <b class="wordmark">haijack</b>
       <span class="project" id="project"></span>
     </div>
     <button class="icon-btn" id="open-memory" title="Память и журнал" aria-label="Память и журнал"><svg viewBox="0 0 24 24"><path d="M12 7v5l3 2"/><circle cx="12" cy="12" r="8.5"/></svg></button>
+    <button class="icon-btn" id="open-export" title="Сохранить диалог в файл" aria-label="Сохранить диалог в файл"><svg viewBox="0 0 24 24"><path d="M12 4v11M7.5 10.5L12 15l4.5-4.5M5 19.5h14"/></svg></button>
     <button class="icon-btn" id="open-clear" title="Очистить диалог" aria-label="Очистить диалог"><svg viewBox="0 0 24 24"><path d="M4 7h16M9 7V4.5h6V7M6.5 7l1 12.5h9l1-12.5M10 11v5M14 11v5"/></svg></button>
     <button class="icon-btn" id="open-settings" title="Настройки" aria-label="Настройки"><svg viewBox="0 0 24 24"><path d="M4 7h10M18 7h2M4 17h2M10 17h10"/><circle cx="16" cy="7" r="2"/><circle cx="8" cy="17" r="2"/></svg></button>
   </div>
@@ -367,13 +432,18 @@ button.cat-item:hover { padding-left: 8px; }
 </div></main>
 
 <footer><div class="wrap">
-  <div class="composer">
+  <button class="jump" id="jump" title="К последним сообщениям" aria-label="К последним сообщениям" hidden><svg viewBox="0 0 24 24"><path d="M12 5v14M5.5 12.5L12 19l6.5-6.5"/></svg></button>
+  <div class="menu" id="slash" hidden role="listbox" aria-label="Команды"></div>
+  <div class="menu" id="model-menu" hidden aria-label="Модели"></div>
+  <div class="composer" id="composer">
+    <div class="queued" id="queued" hidden><b>В очереди</b><span id="queued-text"></span><button class="mini" id="queued-cancel" type="button">Убрать</button></div>
     <div class="files-row" id="files" hidden></div>
     <textarea id="input" rows="1" placeholder="Задача или /команда" aria-label="Задача или команда"></textarea>
     <div class="tools-row">
       <button class="icon-btn" id="attach" title="Прикрепить файлы" aria-label="Прикрепить файлы"><svg viewBox="0 0 24 24"><path d="M19 11.5l-7.2 7.2a4.5 4.5 0 0 1-6.4-6.4l7.9-7.9a3 3 0 0 1 4.3 4.3l-7.8 7.8a1.5 1.5 0 0 1-2.1-2.1l6.8-6.8"/></svg></button>
       <input type="file" id="file-input" multiple hidden>
       <div class="chips">
+      <button class="chip model" id="model-chip" type="button" title="Модель" hidden><i class="dot"></i><span id="model-name"></span></button>
       <select class="chip" id="mode" aria-label="Режим работы">
         <option value="auto">Конвейер</option>
         <option value="plan">Сначала план</option>
@@ -387,7 +457,7 @@ button.cat-item:hover { padding-left: 8px; }
       <button class="btn danger" id="stop" hidden>Остановить</button>
     </div>
   </div>
-  <div class="foot"><span id="tokens"></span><span id="net" hidden>Нет связи с программой, переподключение…</span></div>
+  <div class="foot"><span><span id="model-status"></span><span id="tokens"></span></span><span id="net" hidden>Нет связи с программой, переподключение…</span></div>
 </div></footer>
 
 <div class="scrim" id="scrim" hidden></div>
@@ -416,11 +486,18 @@ button.cat-item:hover { padding-left: 8px; }
       <label class="field"><span>Размер контекста, токенов</span>
         <select class="input" id="s-ctx"><option value="8192">8192 — меньше памяти, быстрее</option><option value="16384">16384 — обычный выбор</option><option value="32768">32768 — для больших файлов, нужно больше памяти</option><option value="65536">65536</option></select>
         <small>Сколько текста модель держит в голове. Если модель не помещается в видеопамять и отвечает медленно, уменьшите.</small></label>
+      <label class="field"><span>Размышления модели</span>
+        <select class="input" id="s-think"><option value="">Как решит модель</option><option value="off">Выключить — ответ начинается сразу</option></select>
+        <small>Думающие модели сначала рассуждают и только потом отвечают. Рассуждения видны в чате по ходу. Без них ответ быстрее, но на сложных задачах хуже.</small></label>
+      <label class="field"><span>Температура</span><input class="input" id="s-temp" type="number" min="0" max="2" step="0.1" inputmode="decimal">
+        <small>0 — строго и предсказуемо, 1 и выше — разнообразнее. Для кода лучше 0–0,3.</small></label>
     </div>
 
     <h3>Работа</h3>
     <label class="field"><span>Папка проекта</span><input class="input" id="s-cwd" type="text" autocapitalize="off" spellcheck="false">
       <small>В этой папке агенты читают и меняют файлы.</small></label>
+    <label class="field"><span>Свои инструкции</span><textarea class="input" id="s-instr" rows="4" placeholder="Например: отвечай кратко; пиши комментарии в коде на английском" spellcheck="false"></textarea>
+      <small>Добавляются к инструкциям каждого агента и действуют во всех чатах.</small></label>
     <label class="field"><span>Заходов на задачу</span><input class="input" id="s-cycles" type="number" min="0" max="1000" inputmode="numeric">
       <small>Если после захода остались замечания или упавшие проверки, работа начинается заново. 0 — без ограничения: задача выполняется, пока не будет готова или пока вы её не остановите.</small></label>
     <label class="switch"><input type="checkbox" id="s-memory"><span><b>Долговременная память</b><small>После каждой задачи программа записывает, что стоит помнить. Память сохраняется при очистке диалога и перезапуске.</small></span></label>
@@ -450,6 +527,15 @@ button.cat-item:hover { padding-left: 8px; }
     <pre class="block" id="m-journal"></pre>
   </div>
   <div class="sheet-foot"><button class="btn small" id="m-forget">Стереть память</button></div>
+</aside>
+
+<aside class="sheet left" id="chats" hidden aria-labelledby="chats-title">
+  <div class="sheet-head"><h2 id="chats-title">Чаты</h2><button class="icon-btn" data-close aria-label="Закрыть"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg></button></div>
+  <div class="sheet-body">
+    <button type="button" class="btn primary small" id="chat-new" style="width:100%;margin-bottom:12px">Новый чат</button>
+    <div id="chat-list"></div>
+    <p class="note" id="chat-note" hidden></p>
+  </div>
 </aside>
 
 <div class="scrim" id="catalog-scrim" hidden></div>
@@ -507,6 +593,10 @@ button.cat-item:hover { padding-left: 8px; }
   var sayEl = null, sayText = null, sayRole = null;   // текущая реплика агента
   var toolEl = null, outEl = null;                    // текущий вызов инструмента и его вывод
   var thinkingEl = null, asks = {}, attached = [], loopOn = false, settings = null, loginBusy = false;
+  var thinkEl = null, thinkText = null, thinkRole = null, thinkStart = 0, thinkLive = false; // блок размышлений модели
+  var lastSay = null, sayLabel = '', lastUserRow = null, transcript = [];  // последняя реплика, запись диалога для сохранения
+  var lastInput = 0, queued = null, doneMark = false, chatKey = null, es = null, pasted = 0;
+  var touch = window.matchMedia('(pointer: coarse)').matches;
   var FENCE = '\x60\x60\x60';
 
   // ---------- помощники ----------
@@ -540,8 +630,23 @@ button.cat-item:hover { padding-left: 8px; }
     add(el('div', 'msg ' + level, text));
   }
   function showError(node, text) { node.textContent = text || ''; node.hidden = !text; }
+  function mini(text, fn) { var b = el('button', 'mini', text); b.type = 'button'; b.onclick = function () { fn(b); }; return b; }
+  function duration(secs) { return secs < 60 ? secs + ' с' : Math.floor(secs / 60) + ' мин ' + (secs % 60) + ' с'; }
+  function seconds(ms) { return ms < 10000 ? (ms / 1000).toFixed(1).replace('.', ',') + ' с' : duration(Math.round(ms / 1000)); }
+  function sameModel(a, b) { return a === b || a === b + ':latest' || a + ':latest' === b; }
+  function shortModel(name) { return String(name || '').replace(/^hf\.co\/[^/]+\//, ''); }
+  function saveFile(name, text) {
+    try {
+      var a = el('a');
+      a.href = URL.createObjectURL(new Blob([text], { type: 'text/plain;charset=utf-8' }));
+      a.download = name; a.style.display = 'none';
+      document.body.appendChild(a); a.click(); a.remove();
+      setTimeout(function () { URL.revokeObjectURL(a.href); }, 10000);
+      return true;
+    } catch (e) { return false; }
+  }
   function copyText(text, button) {
-    function done() { var old = button.textContent; button.textContent = 'Скопировано'; setTimeout(function () { button.textContent = old; }, 1400); }
+    function done() { if (typeof button === 'function') { button(); return; } var old = button.textContent; button.textContent = 'Скопировано'; setTimeout(function () { button.textContent = old; }, 1400); }
     function fallback() {
       var ta = el('textarea'); ta.value = text; ta.style.position = 'fixed'; ta.style.opacity = '0';
       document.body.appendChild(ta); ta.select();
@@ -554,7 +659,7 @@ button.cat-item:hover { padding-left: 8px; }
   // ---------- разметка ответа ----------
   // Простая безопасная разметка: всё строится из узлов DOM, без innerHTML.
   function inline(parent, text) {
-    var re = /(\x60[^\x60\n]+\x60)|(\*\*[^*\n]+\*\*)|(\*[^*\s][^*\n]*\*)|(\[[^\]\n]+\]\(https?:\/\/[^)\s]+\))/g;
+    var re = /(\x60[^\x60\n]+\x60)|(\*\*[^*\n]+\*\*)|(\*[^*\s][^*\n]*\*)|(\[[^\]\n]+\]\(https?:\/\/[^)\s]+\))|(~~[^~\n]+~~)/g;
     var last = 0, m;
     while ((m = re.exec(text)) !== null) {
       if (m.index > last) parent.appendChild(document.createTextNode(text.slice(last, m.index)));
@@ -562,6 +667,7 @@ button.cat-item:hover { padding-left: 8px; }
       if (m[1]) parent.appendChild(el('code', '', t.slice(1, -1)));
       else if (m[2]) parent.appendChild(el('strong', '', t.slice(2, -2)));
       else if (m[3]) parent.appendChild(el('em', '', t.slice(1, -1)));
+      else if (m[5]) parent.appendChild(el('del', '', t.slice(2, -2)));
       else {
         var split = t.indexOf('](');
         var a = el('a', '', t.slice(1, split));
@@ -602,13 +708,24 @@ button.cat-item:hover { padding-left: 8px; }
     }
     if (last < code.length) pre.appendChild(document.createTextNode(code.slice(last)));
   }
+  var EXT = { js: 'js', javascript: 'js', mjs: 'mjs', ts: 'ts', typescript: 'ts', jsx: 'jsx', tsx: 'tsx', py: 'py', python: 'py', sh: 'sh', bash: 'sh', shell: 'sh', ps1: 'ps1', powershell: 'ps1', json: 'json', html: 'html', css: 'css', md: 'md', markdown: 'md', yaml: 'yml', yml: 'yml', toml: 'toml', sql: 'sql', go: 'go', rust: 'rs', rs: 'rs', java: 'java', kotlin: 'kt', c: 'c', cpp: 'cpp', cs: 'cs', php: 'php', rb: 'rb', ruby: 'rb', xml: 'xml', diff: 'diff', bat: 'bat' };
+  var isTableRule = function (l) { return /^\s*\|?\s*:?-{2,}:?\s*(\|\s*:?-{2,}:?\s*)+\|?\s*$/.test(l); };
+  function tableCells(l) { return l.trim().replace(/^\|/, '').replace(/\|$/, '').split('|').map(function (c) { return c.trim(); }); }
   function codeBlock(lang, code) {
     var box = el('div', 'code'), head = el('div', 'head');
     head.appendChild(el('span', '', lang || 'код'));
+    var btns = el('span', 'btns');
+    if (!touch && code.length > 200) {
+      var save = el('button', 'copy', 'Сохранить');
+      save.type = 'button';
+      save.onclick = function () { saveFile('haijack-code.' + (EXT[(lang || '').toLowerCase()] || 'txt'), code + '\n'); };
+      btns.appendChild(save);
+    }
     var copy = el('button', 'copy', 'Копировать');
     copy.type = 'button';
     copy.onclick = function () { copyText(code, copy); };
-    head.appendChild(copy);
+    btns.appendChild(copy);
+    head.appendChild(btns);
     box.appendChild(head);
     var pre = el('pre');
     highlight(pre, code, lang);
@@ -638,9 +755,23 @@ button.cat-item:hover { padding-left: 8px; }
         body.appendChild(codeBlock(fence[1], code.join('\n')));
         continue;
       }
-      var h = line.match(/^(#{1,3})\s+(.*)$/);
+      if (line.indexOf('|') !== -1 && i + 1 < lines.length && isTableRule(lines[i + 1])) {
+        flushPara(); flushList();
+        var table = el('table'), thead = el('thead'), hr = el('tr');
+        tableCells(line).forEach(function (c) { var th = el('th'); inline(th, c); hr.appendChild(th); });
+        thead.appendChild(hr); table.appendChild(thead);
+        var tbody = el('tbody'); i += 2;
+        while (i < lines.length && lines[i].trim() && lines[i].indexOf('|') !== -1) {
+          var tr = el('tr');
+          tableCells(lines[i]).forEach(function (c) { var td = el('td'); inline(td, c); tr.appendChild(td); });
+          tbody.appendChild(tr); i++;
+        }
+        table.appendChild(tbody); body.appendChild(table);
+        continue;
+      }
+      var h = line.match(/^(#{1,4})\s+(.*)$/);
       var li = line.match(/^\s*(?:[-*•]|(\d+)[.)])\s+(.*)$/);
-      if (h) { flushPara(); flushList(); var head = el('h' + h[1].length); inline(head, h[2]); body.appendChild(head); }
+      if (h) { flushPara(); flushList(); var head = el('h' + Math.min(3, h[1].length)); inline(head, h[2]); body.appendChild(head); }
       else if (/^\s*(-{3,}|\*{3,})\s*$/.test(line)) { flushPara(); flushList(); body.appendChild(el('hr')); }
       else if (li) {
         flushPara();
@@ -682,16 +813,70 @@ button.cat-item:hover { padding-left: 8px; }
   // ---------- реплики ----------
   function endSay() {
     if (!sayEl) return;
-    renderMarkdown(sayEl.querySelector('.body'), sayText.data);
+    var raw = sayText.data;
+    renderMarkdown(sayEl.querySelector('.body'), raw);
+    // Под репликой: скорость ответа (приходит следом) и копирование исходного текста
+    var acts = el('div', 'acts-line');
+    acts.appendChild(mini('Копировать', function (b) { copyText(raw, b); }));
+    sayEl.appendChild(acts);
+    if (raw.trim()) transcript.push({ who: sayLabel, text: raw });
+    lastSay = { role: sayRole, acts: acts, stat: false };
     sayEl = null; sayText = null; sayRole = null;
   }
+  function closeThink() {
+    if (!thinkEl) return;
+    var secs = Math.round((Date.now() - thinkStart) / 1000);
+    thinkEl.className = 'think'; thinkEl.open = false;
+    thinkEl.firstChild.textContent = 'Размышления' + (thinkLive && secs > 0 ? ' · ' + duration(secs) : '');
+    thinkEl = null; thinkText = null; thinkRole = null;
+  }
+  var thinkingSince = 0, thinkingTimer = null, thinkingLabel = '';
+  function tickThinking() {
+    if (!thinkingEl) return;
+    var secs = Math.floor((Date.now() - thinkingSince) / 1000);
+    var label = state.modelState === 'loading' ? 'Модель загружается в память' : thinkingLabel;
+    thinkingEl.lastChild.textContent = label + (secs >= 2 ? ' · ' + duration(secs) : '');
+  }
   function setThinking(text) {
-    if (!text) { if (thinkingEl) { thinkingEl.remove(); thinkingEl = null; } return; }
+    if (!text) { clearInterval(thinkingTimer); thinkingTimer = null; if (thinkingEl) { thinkingEl.remove(); thinkingEl = null; } return; }
     if (!thinkingEl) {
       thinkingEl = el('div', 'thinking'); thinkingEl.appendChild(el('i')); thinkingEl.appendChild(el('span'));
       var stick = nearBottom(); log.appendChild(thinkingEl); if (stick) toBottom();
+      thinkingSince = Date.now();
     }
-    thinkingEl.lastChild.textContent = text;
+    thinkingLabel = text;
+    tickThinking();
+    if (!thinkingTimer) thinkingTimer = setInterval(tickThinking, 1000);
+  }
+  // Реплика пользователя: текст, прикреплённые файлы одной строкой и действия
+  function userRow(text) {
+    var row = el('div', 'user-row');
+    var parts = text.split('\n\n# Вложение: ');
+    row.appendChild(el('div', 'user', parts[0]));
+    if (parts.length > 1) {
+      var files = el('div', 'files-row');
+      parts.slice(1).forEach(function (p) { files.appendChild(el('span', 'file-chip', p.split('\n')[0])); });
+      files.style.padding = '6px 0 0'; row.appendChild(files);
+    }
+    var acts = el('div', 'acts-line');
+    acts.appendChild(mini('Копировать', function (b) { copyText(parts[0], b); }));
+    acts.appendChild(mini('Изменить', function () { input.value = parts[0]; grow(); input.focus(); }));
+    acts.appendChild(mini('Повторить', function () {
+      if (state.busy) { note('warn', 'Дождитесь окончания текущей задачи или остановите её.'); return; }
+      // Последнюю задачу программа выполняет заново (прежний ответ ассистента убирается из его памяти)
+      if (row === lastUserRow && !/^[/!]/.test(text)) api('POST', '/api/retry', {}).catch(function () { sendText(text); });
+      else sendText(text);
+    }));
+    row.appendChild(acts);
+    lastUserRow = row;
+    return row;
+  }
+  function drawFoot() {
+    var parts = [];
+    if (state.numCtx && lastInput) parts.push('Контекст занят на ' + Math.min(100, Math.round(100 * lastInput / state.numCtx)) + '%');
+    var t = state.tokens;
+    if (t && (t.input || t.output)) parts.push('за сессию: вход ' + t.input.toLocaleString('ru') + ', выход ' + t.output.toLocaleString('ru') + ' токенов');
+    $('tokens').textContent = parts.join(' · ');
   }
 
   // ---------- блок действий ----------
@@ -779,12 +964,18 @@ button.cat-item:hover { padding-left: 8px; }
     while (log.lastChild && log.lastChild !== $('empty')) log.removeChild(log.lastChild);
     $('empty').hidden = false;
     toolEl = null; outEl = null; thinkingEl = null; asks = {}; visited = {}; activeRole = null;
+    clearInterval(thinkingTimer); thinkingTimer = null;
+    thinkEl = null; thinkText = null; thinkRole = null; lastSay = null; lastUserRow = null; transcript = []; lastInput = 0;
     workEl = null; workInner = null; workRole = null; stageRole = null;
     drawRelay();
   }
   function applyState(ev) {
     if (bootId && ev.bootId && ev.bootId !== bootId) { location.reload(); return; } // программа перезапустилась с новым кодом
     bootId = ev.bootId || bootId;
+    // Открыт другой чат (здесь или на другом устройстве) — перечитываем историю с начала
+    if (chatKey !== null && ev.chat !== undefined && ev.chat !== chatKey) { chatKey = ev.chat; reconnect(); return; }
+    if (ev.chat !== undefined) chatKey = ev.chat;
+    var wasBusy = state.busy;
     state = ev;
     $('mode').value = ev.mode;
     $('auto').setAttribute('aria-pressed', ev.autoApprove ? 'true' : 'false');
@@ -794,10 +985,19 @@ button.cat-item:hover { padding-left: 8px; }
     $('project').title = ev.cwd || '';
     $('send').hidden = !!ev.busy; $('stop').hidden = !ev.busy;
     $('mode').disabled = !!ev.busy;
-    input.placeholder = ev.target === 'self' ? 'Что улучшить в приложении?' : loopOn ? 'Задача, которая будет выполняться непрерывно' : 'Задача или /команда';
-    if (ev.tokens && (ev.tokens.input || ev.tokens.output)) {
-      $('tokens').textContent = 'Токены за сессию: вход ' + ev.tokens.input.toLocaleString('ru') + ', выход ' + ev.tokens.output.toLocaleString('ru');
-    }
+    input.placeholder = ev.busy ? 'Следующая задача — отправится, когда закончится текущая' : ev.target === 'self' ? 'Что улучшить в приложении?' : loopOn ? 'Задача, которая будет выполняться непрерывно' : 'Задача или /команда';
+    drawFoot();
+    // Модель: имя, состояние (загружается, в памяти, ошибка) и пояснение
+    var chip = $('model-chip'), local = ev.provider === 'local';
+    chip.hidden = !ev.model || !!ev.needsSetup;
+    $('model-name').textContent = shortModel(ev.model);
+    chip.title = (ev.model || '') + (local ? '\nНажмите, чтобы сменить модель' : '');
+    chip.setAttribute('data-state', local ? ev.modelState || '' : '');
+    var status = $('model-status'), noteText = String(ev.modelNote || '').split('\n')[0];
+    status.className = ev.modelState === 'error' ? 'error' : '';
+    status.textContent = !local ? '' : ev.modelState === 'loading' ? 'Модель загружается в память… ' : noteText ? noteText + ' ' : '';
+    if (wasBusy && !ev.busy) { if (document.hidden) doneMark = true; setTimeout(flushQueue, 0); }
+    document.title = (ev.busy ? '● ' : doneMark ? '✓ ' : '') + 'haijack';
     if (!ev.busy) { setThinking(null); if (activeRole) { visited[activeRole] = true; activeRole = null; } }
     drawRelay();
     if (ev.pull) drawPull(ev.pull);
@@ -829,11 +1029,44 @@ button.cat-item:hover { padding-left: 8px; }
       case 'reset': resetLog(); break;
       case 'pull': drawPull(ev); break;
       case 'user':
-        endSay(); closeWork(); visited = {}; activeRole = null; stageRole = null; drawRelay();
-        add(el('div', 'user', ev.text)); toBottom();
+        endSay(); closeWork(); closeThink(); visited = {}; activeRole = null; stageRole = null; lastSay = null; drawRelay();
+        add(userRow(ev.text)); toBottom();
+        transcript.push({ who: 'Вы', text: ev.text });
+        break;
+      case 'think':
+        setActive(ev.role);
+        if (!thinkEl || thinkRole !== ev.role) {
+          endSay(); closeWork(); closeThink();
+          thinkEl = hue(el('details', 'think live'), ev.role);
+          thinkLive = !!state.busy; thinkEl.open = thinkLive;
+          thinkEl.appendChild(el('summary', '', thinkLive ? ev.label + ' размышляет' : 'Размышления'));
+          if (!thinkLive) thinkEl.className = 'think';
+          var tb = el('div', 'think-body');
+          thinkText = document.createTextNode(''); tb.appendChild(thinkText); thinkEl.appendChild(tb);
+          thinkRole = ev.role; thinkStart = Date.now();
+          add(thinkEl);
+        }
+        keepBottom(function () {
+          thinkText.appendData(thinkText.data ? ev.delta : ev.delta.replace(/^\s+/, ''));
+          thinkEl.lastChild.scrollTop = thinkEl.lastChild.scrollHeight;
+        });
+        break;
+      case 'stats':
+        if (ev.input) { lastInput = ev.input; drawFoot(); }
+        if (lastSay && lastSay.role === ev.role && !lastSay.stat) {
+          var bits = [];
+          if (ev.output) bits.push(plural(ev.output, 'токен', 'токена', 'токенов'));
+          if (ev.speed) bits.push(String(ev.speed).replace('.', ',') + ' ток/с');
+          if (ev.firstMs >= 100) bits.push('ответ начался через ' + seconds(ev.firstMs));
+          if (bits.length) {
+            var stat = el('span', 'stat', bits.join(' · ')); stat.title = ev.model || '';
+            lastSay.acts.insertBefore(stat, lastSay.acts.firstChild);
+          }
+          lastSay.stat = true;
+        }
         break;
       case 'stage':
-        endSay(); closeWork(); setActive(ev.role); stageRole = ev.role;
+        endSay(); closeWork(); closeThink(); setActive(ev.role); stageRole = ev.role;
         var st = hue(el('div', 'stage'), ev.role);
         st.appendChild(el('b', '', ev.label)); st.appendChild(el('span', '', ev.desc));
         add(st);
@@ -843,7 +1076,8 @@ button.cat-item:hover { padding-left: 8px; }
       case 'text':
         setActive(ev.role);
         if (!sayEl || sayRole !== ev.role) {
-          endSay(); closeWork();
+          endSay(); closeWork(); closeThink();
+          sayLabel = ev.label;
           sayEl = hue(el('div', 'say'), ev.role);
           if (ev.role !== stageRole) {
             var who = el('div', 'who');
@@ -862,7 +1096,7 @@ button.cat-item:hover { padding-left: 8px; }
         break;
       case 'textEnd': keepBottom(endSay); break;
       case 'tool':
-        endSay(); setActive(ev.role);
+        endSay(); closeThink(); setActive(ev.role);
         openWork(ev.role);
         toolEl = hue(el('div', 'tool'), ev.role); outEl = null;
         var call = el('div', 'call');
@@ -884,23 +1118,31 @@ button.cat-item:hover { padding-left: 8px; }
         if (workEl && ev.tone === 'error') { workErrors++; drawWorkSummary(); }
         toolEl = null; outEl = null;
         break;
-      case 'ask': endSay(); setThinking(null); drawAsk(ev); break;
+      case 'ask': endSay(); closeThink(); setThinking(null); drawAsk(ev); break;
       case 'askDone': closeAsk(ev); break;
-      case 'msg': endSay(); closeWork(); toolEl = null; outEl = null; note(ev.level, ev.text); break;
-      case 'summary': endSay(); closeWork(); stageRole = null; drawSummary(ev); break;
+      case 'msg': endSay(); closeWork(); closeThink(); toolEl = null; outEl = null; note(ev.level, ev.text); break;
+      case 'summary': endSay(); closeWork(); closeThink(); stageRole = null; drawSummary(ev); break;
     }
   }
 
   // ---------- связь ----------
   function connect() {
-    var es = new EventSource('/events?t=' + encodeURIComponent(token) + '&since=' + lastSeq);
-    es.onopen = function () { $('net').hidden = true; };
-    es.onmessage = function (m) { try { onEvent(JSON.parse(m.data)); } catch (e) { console.error(e); } };
-    es.onerror = function () {
+    var source = new EventSource('/events?t=' + encodeURIComponent(token) + '&since=' + lastSeq);
+    es = source;
+    source.onopen = function () { $('net').hidden = true; };
+    source.onmessage = function (m) { if (source !== es) return; try { onEvent(JSON.parse(m.data)); } catch (e) { console.error(e); } };
+    source.onerror = function () {
+      if (source !== es) return;
       $('net').hidden = false;
       // Браузер переподключается сам; если поток закрыт окончательно — открываем заново
-      if (es.readyState === 2) { es.close(); setTimeout(connect, 1200); }
+      if (source.readyState === 2) { source.close(); setTimeout(function () { if (source === es) connect(); }, 1200); }
     };
+  }
+  // Историю показываем заново с первого события (открыт другой чат)
+  function reconnect() {
+    if (es) es.close();
+    lastSeq = 0; resetLog();
+    connect();
   }
 
   // ---------- ввод ----------
@@ -909,11 +1151,38 @@ button.cat-item:hover { padding-left: 8px; }
     if (state.busy) { note('warn', 'Дождитесь окончания текущей задачи или остановите её.'); return Promise.resolve(false); }
     return api('POST', '/api/input', { text: text }).then(function () { return true; }, function (e) { note('error', e.message); return false; });
   }
+  // Написанное во время работы агентов не теряется: оно ждёт в очереди и уходит, когда задача закончится
+  function drawQueued() {
+    $('queued').hidden = !queued;
+    $('queued-text').textContent = queued ? queued.split('\n\n# Вложение: ')[0].replace(/\s+/g, ' ') : '';
+  }
+  function flushQueue() {
+    if (!queued || state.busy) return;
+    var text = queued; queued = null; drawQueued();
+    sendText(text).then(function (ok) { if (!ok) { queued = text; drawQueued(); } });
+  }
+  $('queued-cancel').onclick = function () { if (queued && !input.value) { input.value = queued.split('\n\n# Вложение: ')[0]; grow(); } queued = null; drawQueued(); input.focus(); };
+  // Ранее отправленные запросы: стрелка вверх в пустом поле возвращает их
+  var sent = [], sentAt = -1, draft = '';
+  try { sent = JSON.parse(localStorage.getItem('haijack-sent') || '[]'); if (!Array.isArray(sent)) sent = []; } catch (e) { sent = []; }
+  function remember(text) {
+    sentAt = -1;
+    if (!text || text.length > 4000 || sent[sent.length - 1] === text) return;
+    sent.push(text); if (sent.length > 60) sent.shift();
+    try { localStorage.setItem('haijack-sent', JSON.stringify(sent)); } catch (e) { /* история останется только до закрытия окна */ }
+  }
   function sendInput() {
     var text = input.value.trim();
-    if (!text || state.busy) return;
+    if (!text) return;
+    hideSlash();
+    remember(text);
     attached.forEach(function (f) { text += '\n\n# Вложение: ' + f.name + '\n' + FENCE + '\n' + f.content.replace(/\x60{3}/g, "'''") + '\n' + FENCE; });
     if (loopOn && text.charAt(0) !== '/' && text.charAt(0) !== '!') text = '/loop ' + text;
+    if (state.busy) {
+      queued = queued ? queued + '\n\n' + text : text;
+      input.value = ''; attached = []; drawFiles(); grow(); drawQueued();
+      return;
+    }
     $('send').disabled = true;
     sendText(text).then(function (ok) {
       $('send').disabled = false;
@@ -946,11 +1215,129 @@ button.cat-item:hover { padding-left: 8px; }
       reader.readAsText(file);
     });
   }
-  var touch = window.matchMedia('(pointer: coarse)').matches;
-  input.addEventListener('input', grow);
+  // Подсказка команд: появляется, когда строка начинается с «/»
+  var COMMANDS = [
+    ['/help', 'все команды'], ['/diff', 'показать изменения последней задачи'], ['/undo', 'откатить изменения последней задачи'],
+    ['/retry', 'выполнить последнюю задачу заново'], ['/clear', 'очистить диалог, сохранив опыт в память'],
+    ['/memory', 'что программа помнит'], ['/journal', 'последние задачи и их результаты'], ['/status', 'среда и настройки'],
+    ['/cost', 'расход токенов за сессию'], ['/cd ', 'сменить папку проекта'], ['/loop ', 'повторять задачу до остановки'],
+    ['/self ', 'улучшить само приложение'], ['/pull ', 'скачать модель на сервер Ollama'], ['/mode ', 'режим: auto, plan или solo'],
+    ['/yes', 'не спрашивать перед записью файлов и командами']
+  ];
+  var slashItems = [], slashSel = 0;
+  function hideSlash() { slashItems = []; $('slash').hidden = true; }
+  function drawSlash() {
+    var v = input.value, menu = $('slash');
+    slashItems = /^\/[a-z]*$/i.test(v) ? COMMANDS.filter(function (c) { return c[0].indexOf(v.toLowerCase()) === 0 && c[0] !== v; }) : [];
+    menu.hidden = !slashItems.length;
+    if (!slashItems.length) return;
+    $('model-menu').hidden = true;
+    if (slashSel >= slashItems.length) slashSel = 0;
+    menu.textContent = '';
+    slashItems.forEach(function (c, i) {
+      var b = el('button', 'menu-item' + (i === slashSel ? ' sel' : '')); b.type = 'button';
+      b.appendChild(el('b', '', c[0].trim())); b.appendChild(el('span', '', c[1]));
+      b.onclick = function () { pickSlash(i); };
+      menu.appendChild(b);
+    });
+  }
+  function pickSlash(i) { input.value = slashItems[i][0]; hideSlash(); input.focus(); grow(); }
+  input.addEventListener('input', function () { grow(); slashSel = 0; drawSlash(); });
   input.addEventListener('keydown', function (e) {
+    if (slashItems.length) {
+      if (e.key === 'ArrowDown' || e.key === 'ArrowUp') { e.preventDefault(); slashSel = (slashSel + (e.key === 'ArrowDown' ? 1 : slashItems.length - 1)) % slashItems.length; drawSlash(); return; }
+      if (e.key === 'Tab' || (e.key === 'Enter' && !e.shiftKey)) { e.preventDefault(); pickSlash(slashSel); return; }
+      if (e.key === 'Escape') { e.stopPropagation(); hideSlash(); return; }
+    }
+    if (e.key === 'ArrowUp' && sent.length && input.selectionStart === 0 && input.selectionEnd === 0 && (input.value === '' || sentAt !== -1)) {
+      e.preventDefault();
+      if (sentAt === -1) { draft = input.value; sentAt = sent.length; }
+      if (sentAt > 0) { sentAt--; input.value = sent[sentAt]; grow(); input.setSelectionRange(0, 0); }
+      return;
+    }
+    if (e.key === 'ArrowDown' && sentAt !== -1 && input.selectionEnd === input.value.length) {
+      e.preventDefault();
+      sentAt++;
+      if (sentAt >= sent.length) { sentAt = -1; input.value = draft; } else input.value = sent[sentAt];
+      grow();
+      return;
+    }
     // На телефоне Enter переносит строку, на компьютере — отправляет (Shift+Enter — перенос)
     if (e.key === 'Enter' && !e.shiftKey && !touch && !e.isComposing) { e.preventDefault(); sendInput(); }
+  });
+  // Файлы можно перетащить в окно или вставить из буфера; длинная вставка становится вложением
+  input.addEventListener('paste', function (e) {
+    var data = e.clipboardData;
+    if (!data) return;
+    if (data.files && data.files.length) { e.preventDefault(); readFiles(data.files); return; }
+    var text = data.getData('text');
+    if (text && text.length > 6000) {
+      e.preventDefault();
+      pasted++;
+      attached.push({ name: 'вставка-' + pasted + '.txt', content: text }); drawFiles();
+    }
+  });
+  var dragDepth = 0;
+  function hasFiles(e) { return e.dataTransfer && Array.prototype.indexOf.call(e.dataTransfer.types || [], 'Files') !== -1; }
+  document.addEventListener('dragenter', function (e) { if (hasFiles(e)) { dragDepth++; $('composer').className = 'composer drop'; } });
+  document.addEventListener('dragleave', function (e) { if (hasFiles(e) && --dragDepth <= 0) { dragDepth = 0; $('composer').className = 'composer'; } });
+  document.addEventListener('dragover', function (e) { if (hasFiles(e)) e.preventDefault(); });
+  document.addEventListener('drop', function (e) {
+    if (!hasFiles(e)) return;
+    e.preventDefault(); dragDepth = 0; $('composer').className = 'composer';
+    readFiles(e.dataTransfer.files);
+  });
+  // Кнопка «вниз» видна, когда лента прокручена вверх
+  scroller.addEventListener('scroll', function () { $('jump').hidden = nearBottom(); });
+  $('jump').onclick = function () { toBottom(); $('jump').hidden = true; };
+  document.addEventListener('visibilitychange', function () { if (!document.hidden && doneMark) { doneMark = false; document.title = (state.busy ? '● ' : '') + 'haijack'; } });
+
+  // ---------- выбор модели ----------
+  function hideModelMenu() { $('model-menu').hidden = true; }
+  function drawModelMenu(list, error) {
+    var menu = $('model-menu');
+    menu.textContent = '';
+    if (error) menu.appendChild(el('div', 'note error', error));
+    else if (!list.length) menu.appendChild(el('div', 'menu-head', 'На сервере пока нет моделей. Скачайте первую.'));
+    else menu.appendChild(el('div', 'menu-head', list.length === 1
+      ? 'Установлена одна модель — с ней работают все агенты.'
+      : 'Выбранная модель сразу загружается в память, прежняя выгружается.'));
+    list.forEach(function (m) {
+      var current = sameModel(m.name, state.model);
+      var b = el('button', 'model-item'); b.type = 'button';
+      b.appendChild(el('span', 'tick', current ? '✓' : ''));
+      var name = el('span', 'nm', m.name);
+      var meta = [m.params, m.quant, formatSize(m.size)].filter(Boolean).join(' · ');
+      if (meta) name.appendChild(el('small', '', meta));
+      b.appendChild(name);
+      var st = current && state.modelState === 'loading' ? 'загружается…' : m.loaded ? (m.cpu >= 5 ? 'в памяти, ' + m.cpu + '% на процессоре' : 'в памяти') : '';
+      b.appendChild(el('span', 'st' + (m.loaded ? ' on' : ''), st));
+      b.onclick = function () {
+        hideModelMenu();
+        if (current) return;
+        if (state.busy) { note('warn', 'Модель можно сменить, когда закончится текущая задача.'); return; }
+        api('POST', '/api/model', { model: m.name }).catch(function (e) { note('error', e.message); });
+      };
+      menu.appendChild(b);
+    });
+    var foot = el('div', 'menu-foot');
+    foot.appendChild(mini('Скачать другую модель', function () { hideModelMenu(); openCatalog({ quick: true }); }));
+    foot.appendChild(mini('Настройки модели', function () { hideModelMenu(); $('open-settings').click(); }));
+    menu.appendChild(foot);
+  }
+  $('model-chip').onclick = function (e) {
+    e.stopPropagation();
+    if (state.provider !== 'local') { $('open-settings').click(); return; }
+    var menu = $('model-menu');
+    if (!menu.hidden) { hideModelMenu(); return; }
+    hideSlash();
+    menu.hidden = false; menu.textContent = '';
+    menu.appendChild(el('div', 'menu-head', 'Загружаю список моделей…'));
+    api('GET', '/api/models').then(function (r) { drawModelMenu(r.details || [], ''); }, function (err) { drawModelMenu([], err.message); });
+  };
+  document.addEventListener('click', function (e) {
+    if (!$('model-menu').hidden && !$('model-menu').contains(e.target)) hideModelMenu();
+    if (!$('slash').hidden && !$('slash').contains(e.target) && e.target !== input) hideSlash();
   });
   $('send').onclick = sendInput;
   $('stop').onclick = function () { api('POST', '/api/abort', {}).catch(function (e) { note('error', e.message); }); };
@@ -977,7 +1364,10 @@ button.cat-item:hover { padding-left: 8px; }
   Array.prototype.forEach.call(document.querySelectorAll('[data-close]'), function (b) { b.onclick = closeSheet; });
   document.addEventListener('keydown', function (e) {
     if (e.key !== 'Escape') return;
-    if (!$('catalog').hidden) closeCatalog(); else closeSheet();
+    if (!$('catalog').hidden) closeCatalog();
+    else if (openSheet || !$('confirm').hidden) closeSheet();
+    else if (!$('model-menu').hidden) hideModelMenu();
+    else if (state.busy) $('stop').click(); // как в терминале: Esc останавливает работу
   });
   function confirmBox(title, text, yes, fn) {
     closeSheet();
@@ -998,16 +1388,19 @@ button.cat-item:hover { padding-left: 8px; }
     Array.prototype.forEach.call(buttons, function (b) { b.onclick = function () { select(b.getAttribute('data-tab')); }; });
     return select;
   }
-  function fillModels(select, models, current) {
+  function fillModels(select, models, current, details) {
     select.textContent = '';
     if (!models.length) { select.appendChild(new Option('На сервере нет моделей', '')); return; }
-    models.forEach(function (m) { select.appendChild(new Option(m, m)); });
-    if (current && models.indexOf(current) !== -1) select.value = current;
+    var sizes = {};
+    (details || []).forEach(function (d) { sizes[d.name] = formatSize(d.size); });
+    models.forEach(function (m) { select.appendChild(new Option(m + (sizes[m] ? ' — ' + sizes[m] : ''), m)); });
+    var match = models.filter(function (m) { return sameModel(m, current || ''); })[0];
+    if (match) select.value = match;
   }
   function loadModels(urlInput, select, button, errorNode, current) {
     var url = urlInput.value.trim() || urlInput.placeholder;
     button.disabled = true; showError(errorNode, '');
-    return api('GET', '/api/models?url=' + encodeURIComponent(url)).then(function (r) { fillModels(select, r.models, current); })
+    return api('GET', '/api/models?url=' + encodeURIComponent(url)).then(function (r) { fillModels(select, r.models, current, r.details); })
       .catch(function (e) { showError(errorNode, e.message); })
       .then(function () { button.disabled = false; });
   }
@@ -1101,6 +1494,11 @@ button.cat-item:hover { padding-left: 8px; }
   $('cat-pull-use').onclick = function () {
     var model = pullState.model;
     if (!catSource) { closeCatalog(); return; }
+    if (catSource.quick) {
+      closeCatalog();
+      api('POST', '/api/model', { model: model }).catch(function (e) { note('error', e.message); });
+      return;
+    }
     loadModels(catSource.url, catSource.select, catSource.button, catSource.error, model).then(function () {
       // Сервер может показывать имя в своём виде; если точного совпадения нет, оставляем выбор пользователю
       if (catSource.select.value !== model) showError(catSource.error, 'Модель скачана. Выберите её в списке.');
@@ -1125,7 +1523,10 @@ button.cat-item:hover { padding-left: 8px; }
   $('s-catalog').onclick = function () { openCatalog({ url: $('s-local'), select: $('s-model-l'), button: $('s-load'), error: $('s-error') }); };
 
   // ---------- вход ----------
-  var loginTab = tabs($('login-tabs'), $('login-form'), function () { showError($('l-error'), ''); });
+  var loginTab = tabs($('login-tabs'), $('login-form'), function (name) {
+    showError($('l-error'), '');
+    if (name === 'local' && !$('l-model').value) $('l-load').click();
+  });
   function openLogin() {
     $('login').hidden = false;
     api('GET', '/api/settings').then(function (s) {
@@ -1188,6 +1589,9 @@ button.cat-item:hover { padding-left: 8px; }
       Array.prototype.forEach.call(ctx.options, function (o) { if (Number(o.value) === s.local.numCtx) known = true; });
       if (!known) ctx.appendChild(new Option(String(s.local.numCtx), String(s.local.numCtx)));
       ctx.value = String(s.local.numCtx);
+      $('s-think').value = s.local.think || '';
+      $('s-temp').value = s.local.temperature;
+      $('s-instr').value = s.instructions || '';
       fillModels($('s-model-l'), s.provider === 'local' && s.model ? [s.model] : [], s.model);
       $('s-cwd').value = s.cwd || '';
       $('s-cycles').value = s.maxCycles;
@@ -1206,6 +1610,8 @@ button.cat-item:hover { padding-left: 8px; }
       $('s-about').textContent = 'Версия ' + s.version + ', ' + s.platform + '\n' + s.self;
       $('s-quit').hidden = !!s.isAndroidApp;
       show($('settings'));
+      // Список установленных моделей подгружается сам — выбирать можно сразу
+      if (s.provider === 'local') loadModels($('s-local'), $('s-model-l'), $('s-load'), $('s-error'), s.model);
     }).catch(function (e) { note('error', e.message); });
   };
   $('s-load').onclick = function () { loadModels($('s-local'), $('s-model-l'), $('s-load'), $('s-error'), settings && settings.model); };
@@ -1218,7 +1624,12 @@ button.cat-item:hover { padding-left: 8px; }
     var local = $('s-tabs').getAttribute('data-value') === 'local';
     var body = { provider: local ? 'local' : 'anthropic', maxCycles: Number($('s-cycles').value), memory: $('s-memory').checked };
     if (!settings.isAndroidApp) body.lan = $('s-lan').checked;
-    if (local) { body.localUrl = $('s-local').value.trim(); body.model = $('s-model-l').value; body.numCtx = Number($('s-ctx').value); }
+    body.instructions = $('s-instr').value;
+    if (local) {
+      body.localUrl = $('s-local').value.trim(); body.model = $('s-model-l').value; body.numCtx = Number($('s-ctx').value);
+      body.think = $('s-think').value;
+      if ($('s-temp').value !== '') body.temperature = Number(String($('s-temp').value).replace(',', '.'));
+    }
     else {
       body.baseUrl = $('s-base').value.trim(); body.effort = $('s-effort').value;
       if ($('s-key').value.trim()) body.apiKey = $('s-key').value.trim();
@@ -1253,6 +1664,42 @@ button.cat-item:hover { padding-left: 8px; }
   $('m-forget').onclick = function () { closeSheet(); sendText('/forget'); };
   $('open-clear').onclick = function () {
     confirmBox('Очистить диалог?', 'Переписка исчезнет с экрана, а агенты начнут с чистого листа — так программа тратит меньше ресурсов. Накопленный опыт перед этим сохранится в памяти.', 'Очистить', function () { sendText('/clear'); });
+  };
+
+  // ---------- чаты ----------
+  function drawChats(r) {
+    var list = $('chat-list');
+    list.textContent = '';
+    r.chats.forEach(function (c) {
+      var row = el('div', 'chat-item' + (c.current ? ' current' : ''));
+      var open = el('button', 'open'); open.type = 'button';
+      open.appendChild(el('b', '', c.title));
+      open.appendChild(el('small', '', c.updated ? new Date(c.updated).toLocaleString('ru', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }) : 'пока пусто'));
+      open.onclick = function () { if (c.current) closeSheet(); else chatAction('/api/chats/open', { id: c.id }); };
+      row.appendChild(open);
+      row.appendChild(mini('Удалить', function () {
+        confirmBox('Удалить чат?', '«' + c.title + '» будет удалён без возможности восстановления. Долговременная память программы сохранится.', 'Удалить', function () {
+          api('POST', '/api/chats/delete', { id: c.id }).catch(function (e) { note('error', e.message); });
+        });
+      }));
+      list.appendChild(row);
+    });
+  }
+  function chatAction(path, body) {
+    api('POST', path, body).then(function () { closeSheet(); input.focus(); }, function (e) { closeSheet(); note('error', e.message); });
+  }
+  $('open-chats').onclick = function () {
+    $('chat-note').hidden = state.chats !== false;
+    $('chat-note').textContent = 'В этом режиме диалог не сохраняется, поэтому чат один.';
+    $('chat-new').hidden = state.chats === false;
+    api('GET', '/api/chats').then(function (r) { drawChats(r); show($('chats')); }).catch(function (e) { note('error', e.message); });
+  };
+  $('chat-new').onclick = function () { chatAction('/api/chats/new', {}); };
+  $('open-export').onclick = function () {
+    if (!transcript.length) { note('info', 'Диалог пуст — сохранять нечего.'); return; }
+    var md = '# Диалог haijack\n\n' + transcript.map(function (t) { return '## ' + t.who + '\n\n' + t.text.trim(); }).join('\n\n') + '\n';
+    var name = 'haijack-' + new Date().toISOString().slice(0, 16).replace(/[T:]/g, '-') + '.md';
+    if (touch || !saveFile(name, md)) copyText(md, function () { note('ok', 'Диалог скопирован в буфер обмена.'); });
   };
 
   // Окно закрывают — сообщаем программе, чтобы она завершилась сразу, а не ждала потери связи

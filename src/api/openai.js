@@ -99,7 +99,11 @@ export class TextFilter {
     this.mode = 'text';  // text | think | call
     this.raw = '';       // весь текст без блоков размышлений — для разбора текстовых вызовов
     this.skipSpace = false;
+    this.thought = '';   // размышления, ещё не забранные через takeThought()
   }
+
+  /** Размышления модели, накопленные с прошлого вызова: их показывают отдельно от ответа */
+  takeThought() { const t = this.thought; this.thought = ''; return t; }
 
   /** @returns {string} видимая часть куска */
   push(chunk) {
@@ -109,7 +113,12 @@ export class TextFilter {
     for (;;) {
       if (this.mode === 'think') {
         const end = buf.indexOf('</think>');
-        if (end === -1) { this.pending = tailPrefix(buf, '</think>'); return visible; }
+        if (end === -1) {
+          this.pending = tailPrefix(buf, '</think>');
+          this.thought += this.pending ? buf.slice(0, buf.length - this.pending.length) : buf;
+          return visible;
+        }
+        this.thought += buf.slice(0, end);
         buf = buf.slice(end + 8);
         this.mode = 'text';
         this.skipSpace = true; // пустые строки после размышлений могут прийти следующими кусками
@@ -396,7 +405,7 @@ export async function ollamaLoadWarning(local, model) {
 export class OpenAIClient {
   constructor(cfg) {
     this.cfg = cfg;
-    this.off = { usage: false, options: false }; // что сервер отказался принимать
+    this.off = { usage: false, options: false, think: false }; // что сервер отказался принимать
     this.failedOver = new Set();                 // модели, с которых клиент ушёл на запасную
     this.ollama = new Map();                     // адрес сервера -> это Ollama? (у неё свой, более полный API)
     this.warned = new Set();                     // модели, о медленной работе которых уже сообщили
@@ -434,6 +443,65 @@ export class OpenAIClient {
     return known.yes;
   }
 
+  get keepAlive() { return this.local.keepAlive || '60m'; }
+
+  /**
+   * Установленные модели с подробностями: размер, число параметров, загружена ли в память.
+   * Подробности есть только у Ollama; у других серверов — только имена.
+   * @returns {Promise<Array<{name: string, size?: number, params?: string, quant?: string, loaded: boolean, cpu?: number}>>}
+   */
+  async listModelsDetailed(signal) {
+    if (!(await this.isOllama())) return (await this.listModels(signal)).map((name) => ({ name, loaded: false }));
+    const get = async (pathname) => {
+      const res = await fetch(`${this.origin}${pathname}`, { headers: this.headers(), signal });
+      if (!res.ok) throw new ApiError(`Сервер моделей ответил ${res.status}`, res.status);
+      return res.json();
+    };
+    let tags;
+    try { tags = await get('/api/tags'); } catch (err) {
+      if (err instanceof ApiError) throw err;
+      throw new ApiError(`Сервер моделей недоступен по адресу ${this.baseUrl}: ${err.cause?.code || err.message}`, 0);
+    }
+    const running = new Map();
+    try { for (const m of (await get('/api/ps')).models || []) running.set(m.name || m.model, m); } catch { /* сведения о памяти необязательны */ }
+    return (tags.models || []).map((m) => {
+      const name = m.name || m.model;
+      const live = running.get(name);
+      const item = { name, size: m.size || 0, params: m.details?.parameter_size || '', quant: m.details?.quantization_level || '', loaded: Boolean(live) };
+      if (live?.size) item.cpu = Math.round(100 * (1 - (live.size_vram || 0) / live.size)); // доля модели на процессоре, %
+      return item;
+    }).filter((m) => m.name).sort((a, b) => a.name.localeCompare(b.name));
+  }
+
+  /**
+   * Загружает модель в память заранее, чтобы первый ответ не ждал загрузки. Размер контекста тот же,
+   * что в рабочих запросах: иначе Ollama загрузила бы модель второй раз. Работает только с Ollama.
+   */
+  async warm(model, signal) {
+    if (!model || !(await this.isOllama())) return false;
+    const body = { model, keep_alive: this.keepAlive, stream: false };
+    if (this.local.numCtx) body.options = { num_ctx: this.local.numCtx };
+    const res = await fetch(`${this.origin}/api/generate`, { method: 'POST', headers: this.headers(), body: JSON.stringify(body), signal });
+    if (!res.ok) {
+      const text = await res.text().catch(() => '');
+      let msg = text;
+      try { msg = JSON.parse(text).error || text; } catch { /* не JSON */ }
+      if (res.status === 404) throw new ApiError(`Модель ${model} не скачана на сервер ${this.baseUrl}.`, 404, text);
+      throw new ApiError(isOom(String(msg)) ? `Модели ${model} не хватает памяти. Возьмите вариант поменьше или уменьшите размер контекста.` : `Не удалось загрузить модель ${model}: ${String(msg).slice(0, 200)}`, res.status, text);
+    }
+    await res.arrayBuffer().catch(() => {});
+    return true;
+  }
+
+  /** Выгружает модель из памяти (при переключении на другую), чтобы освободить место. Сбой не важен. */
+  async unload(model) {
+    try {
+      if (!model || !(await this.isOllama())) return;
+      const res = await fetch(`${this.origin}/api/generate`, { method: 'POST', headers: this.headers(), body: JSON.stringify({ model, keep_alive: 0, stream: false }), signal: AbortSignal.timeout(15000) });
+      await res.arrayBuffer().catch(() => {});
+    } catch { /* модель выгрузится сама по таймеру */ }
+  }
+
   /** Список моделей, установленных на сервере */
   async listModels(signal) {
     let res;
@@ -454,7 +522,7 @@ export class OpenAIClient {
       max_tokens: maxTokens,
       stream: true,
       // Низкая температура: при написании кода и вызове инструментов важна точность, а не разнообразие
-      temperature: 0.2,
+      temperature: this.local.temperature ?? 0.2,
       top_p: 0.9,
     };
     if (this.textTools.has(model)) body.messages = toTextToolMessages(body.messages, tools);
@@ -474,14 +542,16 @@ export class OpenAIClient {
       model,
       messages: textMode ? toTextToolMessages(openai, tools) : toOllamaMessages(openai),
       stream: true,
-      keep_alive: '30m', // модель остаётся в памяти между шагами агента, а не загружается заново
+      keep_alive: this.keepAlive, // модель остаётся в памяти между шагами и задачами, а не загружается заново
       // Ответ не должен занимать больше половины контекста: иначе в нём не останется места для запроса
-      options: { temperature: 0.2, top_p: 0.9, num_predict: Math.min(maxTokens, Math.floor((this.local.numCtx || 16384) / 2)) },
+      options: { temperature: this.local.temperature ?? 0.2, top_p: 0.9, num_predict: Math.min(maxTokens, Math.floor((this.local.numCtx || 16384) / 2)) },
     };
     // Размер контекста задаётся явно: по умолчанию Ollama выбирает его сама по объёму видеопамяти
     if (this.local.numCtx) body.options.num_ctx = this.local.numCtx;
     const converted = textMode ? [] : toOpenAITools(tools);
     if (converted.length) body.tools = converted;
+    // Размышления можно выключить в настройках: модель начинает отвечать сразу, но думает меньше
+    if (this.local.think === 'off' && !this.off.think) body.think = false;
     return body;
   }
 
@@ -507,7 +577,7 @@ export class OpenAIClient {
     let attempt = 0;
 
     const failover = (reason) => {
-      const fb = this.#fallbackFor(model);
+      const fb = req.prime ? null : this.#fallbackFor(model); // прогрев не меняет модель и ни о чём не сообщает
       if (!fb) return false;
       this.failedOver.add(model);
       handlers.onNotice?.(`Модель ${model} недоступна (${reason}). Перехожу на запасную: ${fb}.`);
@@ -531,7 +601,7 @@ export class OpenAIClient {
       // Если модель долго молчит, объясняем почему — иначе это выглядит как зависание
       const current = model;
       const slowTimer = setTimeout(async () => {
-        if (this.warned.has(current)) return;
+        if (req.prime || this.warned.has(current)) return;
         this.warned.add(current);
         const why = native ? await ollamaLoadWarning(this.local, current) : '';
         handlers.onNotice?.(why || `Модель ${current} ещё не начала отвечать: она загружается в память и читает запрос. На большой модели это занимает до нескольких минут.`);
@@ -571,6 +641,7 @@ export class OpenAIClient {
           try { const j = JSON.parse(text); msg = j.error?.message || j.error || j.message || text; } catch { /* не JSON */ }
           msg = typeof msg === 'string' ? msg : JSON.stringify(msg);
           if (res.status === 400 && !native && !this.off.usage && /stream_options/i.test(msg)) { this.off.usage = true; continue; }
+          if (native && !this.off.think && this.local.think === 'off' && /think/i.test(msg)) { this.off.think = true; continue; }
           if (/does not support tools|tools? (is|are) not supported/i.test(msg) && !this.textTools.has(model)) {
             // У модели нет встроенного вызова инструментов — переходим на текстовый режим и повторяем запрос
             this.textTools.add(model);
@@ -647,7 +718,11 @@ export class OpenAIClient {
   async #consumeOllama(body, handlers, toolNames, alive) {
     const filter = new TextFilter();
     let shown = '';
-    const emit = (visible) => { if (visible) { shown += visible; handlers.onText?.(visible); } };
+    const emit = (visible) => {
+      const thought = filter.takeThought();
+      if (thought) handlers.onThinking?.(thought);
+      if (visible) { shown += visible; handlers.onText?.(visible); }
+    };
     const toolUses = [];
     const usage = { input_tokens: 0, output_tokens: 0 };
     let finish = null;
@@ -663,7 +738,8 @@ export class OpenAIClient {
         throw e;
       }
       const m = ev.message || {};
-      // m.thinking — размышления отдельным полем: в ответ не идут
+      // m.thinking — размышления отдельным полем: в ответ не идут, но показываются по ходу
+      if (typeof m.thinking === 'string' && m.thinking) handlers.onThinking?.(m.thinking);
       if (typeof m.content === 'string' && m.content) emit(filter.push(m.content));
       for (const tc of m.tool_calls || []) {
         const fn = tc.function || {};
@@ -694,6 +770,8 @@ export class OpenAIClient {
     const filter = new TextFilter();
     let shown = '';
     const emit = (visible) => {
+      const thought = filter.takeThought();
+      if (thought) handlers.onThinking?.(thought);
       if (!visible) return;
       shown += visible;
       handlers.onText?.(visible);
@@ -720,7 +798,9 @@ export class OpenAIClient {
       const choice = ev.choices?.[0];
       if (!choice) continue;
       const delta = choice.delta || {};
-      // delta.reasoning / reasoning_content — размышления отдельным полем: в ответ не идут
+      // delta.reasoning / reasoning_content — размышления отдельным полем: в ответ не идут, но показываются по ходу
+      const reasoning = delta.reasoning_content ?? delta.reasoning;
+      if (typeof reasoning === 'string' && reasoning) handlers.onThinking?.(reasoning);
       if (typeof delta.content === 'string' && delta.content) emit(filter.push(delta.content));
       for (const tc of delta.tool_calls || []) {
         // Фрагменты одного вызова приходят с одним index; id и имя — обычно только в первом

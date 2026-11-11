@@ -85,6 +85,11 @@ export function buildConfig(cwd) {
       timeoutMs: num(env.LCC_LOCAL_TIMEOUT || env.LOCAL_LLM_TIMEOUT, 180000), // молчание посреди ответа дольше этого — сбой
       // Ожидание первого ответа: модель загружается в память и читает запрос — это бывает долго
       firstTimeoutMs: num(env.LCC_LOCAL_FIRST_TIMEOUT || env.LOCAL_LLM_FIRST_TIMEOUT, 15 * 60 * 1000),
+      // Сколько модель остаётся в памяти после последнего запроса (формат Ollama: 60m, 2h, -1 — всегда)
+      keepAlive: env.LCC_LOCAL_KEEP_ALIVE || '60m',
+      temperature: Math.min(2, Math.max(0, num(env.LCC_LOCAL_TEMPERATURE, 0.2))),
+      // Размышления локальной модели: '' — как решит модель, off — выключить (ответ начинается сразу)
+      think: /^(off|0|false|no)$/i.test(env.LCC_LOCAL_THINK || '') ? 'off' : '',
     },
     apiKey: env.ANTHROPIC_API_KEY || '',
     authToken: env.ANTHROPIC_AUTH_TOKEN || '', // Bearer для прокси/кастомных шлюзов
@@ -114,6 +119,20 @@ export function buildConfig(cwd) {
     allowOutsideCwd: /^(1|true|yes)$/i.test(env.LCC_ALLOW_OUTSIDE || ''),
     ascii: /^(1|true|yes)$/i.test(env.LCC_ASCII || ''),
   };
+}
+
+const INSTRUCTIONS_FILE = path.join(CONFIG_DIR, 'instructions.md');
+
+/** Свои инструкции пользователя: добавляются к инструкциям каждого агента */
+export function readInstructions() {
+  try { return fs.readFileSync(INSTRUCTIONS_FILE, 'utf8').trim().slice(0, 8000); } catch { return ''; }
+}
+
+export function saveInstructions(text) {
+  const clean = String(text ?? '').replace(/\r/g, '').trim().slice(0, 8000);
+  fs.mkdirSync(CONFIG_DIR, { recursive: true });
+  if (clean) fs.writeFileSync(INSTRUCTIONS_FILE, clean + '\n');
+  else fs.rmSync(INSTRUCTIONS_FILE, { force: true });
 }
 
 export function hasCredentials(cfg) {

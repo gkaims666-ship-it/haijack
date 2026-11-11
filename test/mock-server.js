@@ -193,6 +193,8 @@ function fromOllama(messages) {
 export function startOpenAIMock({ style = 'native', installed = ['main-model', 'small-model'], failing = [], hanging = [], ollama = true, cpuShare = 0, delayMs = 0, noTools = false } = {}) {
   const requests = [];
   const pulls = [];
+  const loads = [];   // запросы /api/generate: загрузка модели в память и выгрузка
+  const primes = [];  // запросы прогрева (просят один токен): в общий счёт запросов не идут
   installed = [...installed];
   const server = http.createServer((req, res) => {
     const url = new URL(req.url, 'http://local');
@@ -208,7 +210,7 @@ export function startOpenAIMock({ style = 'native', installed = ['main-model', '
     }
     if (req.method === 'GET' && url.pathname === '/api/tags') {
       res.writeHead(200, { 'content-type': 'application/json' });
-      return res.end(JSON.stringify({ models: installed.map((name) => ({ name })) }));
+      return res.end(JSON.stringify({ models: installed.map((name) => ({ name, size: 5 * 2 ** 30, details: { parameter_size: '7B', quantization_level: 'Q4_K_M' } })) }));
     }
     if (req.method === 'GET' && url.pathname === '/v1/models') {
       res.writeHead(200, { 'content-type': 'application/json' });
@@ -243,6 +245,17 @@ export function startOpenAIMock({ style = 'native', installed = ['main-model', '
         };
         return tick();
       }
+      if (url.pathname === '/api/generate') {
+        loads.push(json);
+        if (!installed.includes(json.model)) { res.writeHead(404, { 'content-type': 'application/json' }); return res.end(JSON.stringify({ error: `model '${json.model}' not found` })); }
+        res.writeHead(200, { 'content-type': 'application/json' });
+        return res.end(JSON.stringify({ model: json.model, done: true }));
+      }
+      if (url.pathname === '/api/chat' && json.options?.num_predict === 1) {
+        primes.push(json);
+        res.writeHead(200, { 'content-type': 'application/x-ndjson' });
+        return res.end(`${JSON.stringify({ message: { role: 'assistant', content: '' }, done: true, done_reason: 'length', prompt_eval_count: 1, eval_count: 1 })}\n`);
+      }
       requests.push({ headers: req.headers, body: json, path: url.pathname });
       if (hanging.includes(json.model)) return; // не отвечаем: клиент должен сработать по таймауту
       const native = url.pathname === '/api/chat';
@@ -269,7 +282,7 @@ export function startOpenAIMock({ style = 'native', installed = ['main-model', '
     });
   });
   return new Promise((resolve) => {
-    server.listen(0, '127.0.0.1', () => resolve({ server, requests, pulls, installed, url: `http://127.0.0.1:${server.address().port}/v1` }));
+    server.listen(0, '127.0.0.1', () => resolve({ server, requests, pulls, loads, primes, installed, url: `http://127.0.0.1:${server.address().port}/v1` }));
   });
 }
 
