@@ -2,7 +2,7 @@
 <resources>
     <!-- Интерфейс программы тёмный, поэтому и системные панели тёмные -->
     <style name="AppTheme" parent="android:Theme.DeviceDefault.NoActionBar">
-        <item name="android:statusBarColor">#0C0C0E</item>
-        <item name="android:navigationBarColor">#0C0C0E</item>
+        <item name="android:statusBarColor">#06080D</item>
+        <item name="android:navigationBarColor">#06080D</item>
     </style>
 </resources>
