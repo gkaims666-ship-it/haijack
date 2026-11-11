@@ -46,7 +46,10 @@ function readJson(req) {
       chunks.push(c);
     });
     req.on('end', () => {
-      try { resolve(JSON.parse(Buffer.concat(chunks).toString('utf8') || '{}')); } catch { reject(new Error('некорректный JSON')); }
+      try {
+        const parsed = JSON.parse(Buffer.concat(chunks).toString('utf8') || '{}');
+        resolve(parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {}); // тело — всегда объект
+      } catch { reject(new Error('некорректный JSON')); }
     });
     req.on('error', reject);
   });

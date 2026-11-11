@@ -165,6 +165,22 @@ function tailPrefix(text, tag) {
   return '';
 }
 
+/** Позиция скобки, закрывающей объект JSON, который начинается в start; -1, если объект не закрыт */
+function balancedEnd(text, start) {
+  let depth = 0;
+  let inString = false;
+  for (let i = start; i < text.length; i++) {
+    const c = text[i];
+    if (inString) {
+      if (c === '\\') i++;
+      else if (c === '"') inString = false;
+    } else if (c === '"') inString = true;
+    else if (c === '{') depth++;
+    else if (c === '}' && --depth === 0) return i;
+  }
+  return -1;
+}
+
 function parseCallObject(obj, known) {
   if (!obj || typeof obj !== 'object') return null;
   const fn = obj.function && typeof obj.function === 'object' ? obj.function : obj;
@@ -202,6 +218,22 @@ export function extractTextToolCalls(text, toolNames) {
   });
   if (!calls.length) {
     take(/```(?:json|tool_call|tool)?\s*\n([\s\S]*?)\n\s*```/g, (json) => fromJson(json));
+  }
+  if (!calls.length) {
+    // Другие обозначения вызова (<|tool_call|>, [TOOL_CALLS]) и случай, когда закрывающий тег встретился
+    // внутри строки аргумента: берём объект JSON после метки по парным скобкам
+    const marker = /<\|?tool_calls?\|?>|\[TOOL_CALLS?\]|<\|tool_call_start\|>/g;
+    let m;
+    while ((m = marker.exec(rest))) {
+      const start = rest.indexOf('{', m.index + m[0].length);
+      if (start === -1) break;
+      const end = balancedEnd(rest, start);
+      const call = end === -1 ? null : fromJson(rest.slice(start, end + 1));
+      if (!call) continue;
+      calls.push(call);
+      rest = rest.slice(0, m.index) + rest.slice(end + 1).replace(/^\s*(?:\]\s*)?(?:<\/tool_call>|<\|tool_call_end\|>)?/, '');
+      marker.lastIndex = m.index;
+    }
   }
   if (!calls.length) {
     // Весь ответ — один JSON-объект с вызовом

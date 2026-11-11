@@ -32,8 +32,8 @@ export function nodeBinary() {
 
 const JSON_WITH_COMMENTS = /^(tsconfig|jsconfig)(\..+)?\.json$|^\.eslintrc(\.json)?$|\.code-workspace$|^(settings|launch|tasks|extensions)\.json$/i;
 
-function run(bin, args) {
-  const res = spawnSync(bin, args, { encoding: 'utf8', timeout: 10000, windowsHide: true });
+function run(bin, args, input) {
+  const res = spawnSync(bin, args, { encoding: 'utf8', timeout: 10000, windowsHide: true, input });
   return `${res.stderr || ''}${res.stdout || ''}`;
 }
 
@@ -53,10 +53,14 @@ export function checkFile(abs) {
       const node = nodeBinary();
       if (!node) return '';
       const out = run(node, ['--check', abs]);
-      if (!/SyntaxError/.test(out)) return '';
-      // .js с ESM-синтаксисом в CommonJS-пакете и JSX — не ошибки файла, а особенности сборки проекта
-      if (/Cannot use import statement|Unexpected token 'export'|Unexpected token '<'|import\.meta/.test(out)) return '';
-      return firstLines(out, 8);
+      const text = fs.readFileSync(abs, 'utf8');
+      const esm = /^\s*(import|export)\b/m.test(text) || /Cannot use import statement|Unexpected token 'export'|import\.meta/.test(out);
+      // Файл с import/export проверяется как модуль: обычная проверка таких .js в пакете без "type": "module"
+      // либо ругается на сам import, либо (в новых версиях Node) молча пропускает настоящую ошибку
+      const report = esm && ext !== '.cjs' ? run(node, ['--input-type=module', '--check'], text).replace(/\[stdin\]/g, base) : out;
+      if (!/SyntaxError/.test(report)) return '';
+      if (/Unexpected token '<'/.test(report)) return ''; // JSX — не ошибка файла, а особенность сборки проекта
+      return firstLines(report, 8);
     }
 
     if (ext === '.py') {
