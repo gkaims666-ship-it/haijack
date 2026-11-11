@@ -45,24 +45,24 @@ jobs:
       - name: Проверка содержимого APK
         run: |
           apk=android/app/build/outputs/apk/release/app-release.apk
-          cp "$apk" local-claude-code.apk
-          unzip -l local-claude-code.apk > listing.txt
+          cp "$apk" haijack.apk
+          unzip -l haijack.apk > listing.txt
           for f in lib/arm64-v8a/libnode.so lib/arm64-v8a/libnative-lib.so lib/arm64-v8a/libc++_shared.so \
                    lib/armeabi-v7a/libnode.so lib/x86_64/libnode.so \
                    assets/lcc/bin/lcc.js assets/lcc/src/index.js assets/lcc/src/web/page.js assets/lcc/src/self/check-worker.js \
                    assets/lcc/test/run.mjs assets/lcc/LCC.md assets/lcc/package.json; do
             grep -q " $f\$" listing.txt || { echo "В APK нет $f"; grep -E "lib/|assets/" listing.txt | head -50; exit 1; }
           done
-          "$ANDROID_HOME"/build-tools/$(ls "$ANDROID_HOME"/build-tools | sort -V | tail -n 1)/apksigner verify --print-certs local-claude-code.apk | head -3
-          sha256sum local-claude-code.apk | tee local-claude-code.apk.sha256
-          ls -la local-claude-code.apk
+          "$ANDROID_HOME"/build-tools/$(ls "$ANDROID_HOME"/build-tools | sort -V | tail -n 1)/apksigner verify --print-certs haijack.apk | head -3
+          sha256sum haijack.apk | tee haijack.apk.sha256
+          ls -la haijack.apk
 
       - uses: actions/upload-artifact@v4
         with:
-          name: local-claude-code-apk
+          name: haijack-apk
           path: |
-            local-claude-code.apk
-            local-claude-code.apk.sha256
+            haijack.apk
+            haijack.apk.sha256
           if-no-files-found: error
 
       # Отладочная сборка нужна только для проверки в эмуляторе и в релиз не попадает
@@ -83,7 +83,7 @@ jobs:
 
       - uses: actions/download-artifact@v4
         with:
-          name: local-claude-code-apk
+          name: haijack-apk
 
       - uses: actions/download-artifact@v4
         with:
@@ -106,7 +106,7 @@ jobs:
           arch: x86_64
           target: default
           disable-animations: true
-          script: bash android/emulator-test.sh local-claude-code.apk && bash android/emulator-self-test.sh app-debug.apk
+          script: bash android/emulator-test.sh haijack.apk && bash android/emulator-self-test.sh app-debug.apk
 
       - uses: actions/upload-artifact@v4
         if: always()
@@ -124,7 +124,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
         with:
-          name: local-claude-code-apk
+          name: haijack-apk
       - name: Релиз
         env:
           GH_TOKEN: ${{ github.token }}
@@ -140,8 +140,8 @@ jobs:
             flags="--prerelease"
             gh release delete "$tag" --cleanup-tag --yes 2>/dev/null || true
           fi
-          gh release create "$tag" local-claude-code.apk local-claude-code.apk.sha256 \
+          gh release create "$tag" haijack.apk haijack.apk.sha256 \
             --target "$GITHUB_SHA" --title "$title" $flags \
             --notes "Приложение для Android 7.0+ (arm64, arm, x86_64) со встроенным Node.js. Коммит ${GITHUB_SHA::7}.
 
-          Установка: скачайте \`local-claude-code.apk\` на телефон, откройте файл и разрешите установку из этого источника."
+          Установка: скачайте \`haijack.apk\` на телефон, откройте файл и разрешите установку из этого источника."

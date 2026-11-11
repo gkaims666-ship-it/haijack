@@ -48,7 +48,7 @@ fi
 page=""
 for _ in $(seq 1 10); do
   adb shell uiautomator dump /sdcard/lcc-ui.xml >/dev/null 2>&1 || true
-  if adb shell cat /sdcard/lcc-ui.xml 2>/dev/null | grep -q "Local Claude Code"; then page=1; break; fi
+  if adb shell cat /sdcard/lcc-ui.xml 2>/dev/null | grep -q "haijack"; then page=1; break; fi
   sleep 3
 done
 adb exec-out screencap -p > emulator-screen.png || true

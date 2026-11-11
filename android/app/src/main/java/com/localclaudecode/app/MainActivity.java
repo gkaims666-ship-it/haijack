@@ -173,7 +173,9 @@ public class MainActivity extends Activity {
     private File workspaceDir() {
         File dir = null;
         if (hasStorageAccess()) {
-            dir = new File(Environment.getExternalStorageDirectory(), "LocalClaudeCode");
+            // Папка прежних версий остаётся рабочей, чтобы проекты не «пропали» после обновления
+            File old = new File(Environment.getExternalStorageDirectory(), "LocalClaudeCode");
+            dir = old.isDirectory() ? old : new File(Environment.getExternalStorageDirectory(), "haijack");
             if (!dir.isDirectory() && !dir.mkdirs()) dir = null;
         }
         if (dir == null) {

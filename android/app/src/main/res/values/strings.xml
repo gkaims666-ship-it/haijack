@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="app_name">Local Claude Code</string>
+    <string name="app_name">haijack</string>
     <string name="starting">Запуск…</string>
     <string name="start_failed">Не удалось запустить программу. Подробности записаны в файл %1$s</string>
     <string name="node_exited">Программа завершилась (код %1$d). Закройте приложение и откройте его снова.</string>
