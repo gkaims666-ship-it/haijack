@@ -487,12 +487,18 @@ textarea.input { padding: 10px 14px; min-height: 96px; resize: vertical; line-he
         <select class="input" id="s-ctx"><option value="8192">8192 — меньше памяти, быстрее</option><option value="16384">16384 — обычный выбор</option><option value="32768">32768 — для больших файлов, нужно больше памяти</option><option value="65536">65536</option></select>
         <small>Сколько текста модель держит в голове. Если модель не помещается в видеопамять и отвечает медленно, уменьшите.</small></label>
       <label class="field"><span>Размышления модели</span>
-        <select class="input" id="s-think"><option value="">Как решит модель</option><option value="off">Выключить — ответ начинается сразу</option></select>
-        <small>Думающие модели сначала рассуждают и только потом отвечают. Рассуждения видны в чате по ходу. Без них ответ быстрее, но на сложных задачах хуже.</small></label>
+        <select class="input" id="s-think"><option value="off">Выключены — ответ начинается сразу</option><option value="on">Включены — как решит модель</option></select>
+        <small>Думающие модели сначала рассуждают и только потом отвечают. Без рассуждений ответ начинается сразу; на сложных задачах с ними результат лучше, и они видны в чате по ходу.</small></label>
       <label class="field"><span>Температура</span><input class="input" id="s-temp" type="number" min="0" max="2" step="0.1" inputmode="decimal">
         <small>0 — строго и предсказуемо, 1 и выше — разнообразнее. Для кода лучше 0–0,3.</small></label>
     </div>
 
+    <h3>Связи с другими средами</h3>
+    <label class="field"><span>Токен GitHub</span><input class="input" id="s-gh" type="password" autocomplete="off" spellcheck="false">
+      <small>С ним агенты читают и создают задачи, запросы на слияние и комментарии. Хранится только на этом устройстве. Создать: github.com → Settings → Developer settings → Personal access tokens.</small></label>
+    <label class="field"><span>Серверы инструментов (MCP)</span><textarea class="input" id="s-mcp" rows="6" spellcheck="false" style="font:12.5px/1.5 var(--mono)" placeholder='{ "mcpServers": { "имя": { "command": "npx", "args": ["-y", "пакет-сервера"] } } }'></textarea>
+      <small>Тот же формат, что в Claude Code и Cursor: можно вставить готовые настройки оттуда. Инструменты серверов получают агенты; действия, которые что-то меняют, спрашивают разрешение.</small></label>
+    <div class="cat-list" id="s-mcp-list"></div>
     <h3>Работа</h3>
     <label class="field"><span>Папка проекта</span><input class="input" id="s-cwd" type="text" autocapitalize="off" spellcheck="false">
       <small>В этой папке агенты читают и меняют файлы.</small></label>
@@ -532,7 +538,8 @@ textarea.input { padding: 10px 14px; min-height: 96px; resize: vertical; line-he
 <aside class="sheet left" id="chats" hidden aria-labelledby="chats-title">
   <div class="sheet-head"><h2 id="chats-title">Чаты</h2><button class="icon-btn" data-close aria-label="Закрыть"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg></button></div>
   <div class="sheet-body">
-    <button type="button" class="btn primary small" id="chat-new" style="width:100%;margin-bottom:12px">Новый чат</button>
+    <button type="button" class="btn primary small" id="chat-new" style="width:100%;margin-bottom:10px">Новый чат</button>
+    <input class="input" id="chat-search" placeholder="Поиск по названиям" autocomplete="off" style="margin-bottom:10px;min-height:40px">
     <div id="chat-list"></div>
     <p class="note" id="chat-note" hidden></p>
   </div>
@@ -1589,7 +1596,10 @@ textarea.input { padding: 10px 14px; min-height: 96px; resize: vertical; line-he
       Array.prototype.forEach.call(ctx.options, function (o) { if (Number(o.value) === s.local.numCtx) known = true; });
       if (!known) ctx.appendChild(new Option(String(s.local.numCtx), String(s.local.numCtx)));
       ctx.value = String(s.local.numCtx);
-      $('s-think').value = s.local.think || '';
+      $('s-think').value = s.local.think === 'on' ? 'on' : 'off';
+      $('s-gh').value = ''; $('s-gh').placeholder = s.github && s.github.hasToken ? 'сохранён — введите новый, чтобы заменить' : 'ghp_… или github_pat_…';
+      $('s-mcp').value = s.mcp ? s.mcp.config : '';
+      drawMcp(s.mcp ? s.mcp.servers : []);
       $('s-temp').value = s.local.temperature;
       $('s-instr').value = s.instructions || '';
       fillModels($('s-model-l'), s.provider === 'local' && s.model ? [s.model] : [], s.model);
@@ -1625,6 +1635,8 @@ textarea.input { padding: 10px 14px; min-height: 96px; resize: vertical; line-he
     var body = { provider: local ? 'local' : 'anthropic', maxCycles: Number($('s-cycles').value), memory: $('s-memory').checked };
     if (!settings.isAndroidApp) body.lan = $('s-lan').checked;
     body.instructions = $('s-instr').value;
+    if ($('s-gh').value.trim()) body.githubToken = $('s-gh').value.trim();
+    if (settings.mcp && $('s-mcp').value.trim() !== String(settings.mcp.config || '').trim()) body.mcpConfig = $('s-mcp').value;
     if (local) {
       body.localUrl = $('s-local').value.trim(); body.model = $('s-model-l').value; body.numCtx = Number($('s-ctx').value);
       body.think = $('s-think').value;
@@ -1667,10 +1679,36 @@ textarea.input { padding: 10px 14px; min-height: 96px; resize: vertical; line-he
   };
 
   // ---------- чаты ----------
+  var chatsData = { chats: [] };
+  $('chat-search').addEventListener('input', function () { drawChats(chatsData); });
+  // Состояние серверов MCP в настройках: что подключено, что ждёт разрешения, что не запустилось
+  function drawMcp(servers) {
+    var box = $('s-mcp-list');
+    box.textContent = '';
+    (servers || []).forEach(function (m) {
+      var row = el('div', 'cat-item');
+      var name = el('span', 'id', m.name);
+      var text = m.state === 'ready' ? plural(m.tools.length, 'инструмент', 'инструмента', 'инструментов')
+        : m.state === 'blocked' ? 'описан в проекте (' + m.source + ') — запустится после разрешения: ' + m.target
+        : m.state === 'error' ? 'не запустился: ' + m.error : 'запускается…';
+      var sub = el('small', '', text); sub.style.cssText = 'display:block;font-family:var(--sans);color:var(--' + (m.state === 'error' ? 'error' : m.state === 'ready' ? 'ok' : 'faint') + ')';
+      name.appendChild(sub); row.appendChild(name);
+      if (m.state === 'blocked') {
+        var allow = el('button', 'btn small', 'Разрешить'); allow.type = 'button';
+        allow.onclick = function () {
+          allow.disabled = true;
+          api('POST', '/api/mcp/trust', { name: m.name }).then(function (r) { drawMcp(r.servers); }, function (e) { showError($('s-error'), e.message); });
+        };
+        row.appendChild(allow);
+      }
+      box.appendChild(row);
+    });
+  }
   function drawChats(r) {
-    var list = $('chat-list');
+    chatsData = r;
+    var list = $('chat-list'), q = $('chat-search').value.trim().toLowerCase();
     list.textContent = '';
-    r.chats.forEach(function (c) {
+    r.chats.filter(function (c) { return !q || c.title.toLowerCase().indexOf(q) !== -1; }).forEach(function (c) {
       var row = el('div', 'chat-item' + (c.current ? ' current' : ''));
       var open = el('button', 'open'); open.type = 'button';
       open.appendChild(el('b', '', c.title));

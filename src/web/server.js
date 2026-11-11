@@ -23,6 +23,8 @@ import { Usage } from '../usage.js';
 import { VERSION } from '../version.js';
 import { platformInfo } from '../platform.js';
 import { selfStatus } from '../self/improve.js';
+import { mcp, parseMcpConfig, MCP_FILE } from '../mcp/client.js';
+import { githubToken } from '../tools/github.js';
 
 const MAX_BODY = 4 * 1024 * 1024;
 const EFFORTS = ['', 'low', 'medium', 'high'];
@@ -270,6 +272,7 @@ export async function startWeb({ cfg, mode, port = 0, host = '127.0.0.1', token,
     clearTimeout(primeTimer);
     warmCtl?.abort();
     primeCtl?.abort();
+    mcp.stop();
     session.abort();
     pull?.controller.abort();
     hub.cancelAsks('no');
@@ -340,8 +343,10 @@ export async function startWeb({ cfg, mode, port = 0, host = '127.0.0.1', token,
     model: cfg.model,
     models: cfg.models,
     anthropic: { hasKey: Boolean(cfg.apiKey || cfg.authToken), baseUrl: cfg.baseUrl },
-    local: { baseUrl: cfg.local.baseUrl, hasKey: Boolean(cfg.local.apiKey), numCtx: cfg.local.numCtx, temperature: cfg.local.temperature, think: cfg.local.think },
+    local: { baseUrl: cfg.local.baseUrl, hasKey: Boolean(cfg.local.apiKey), numCtx: cfg.local.numCtx, temperature: cfg.local.temperature, think: cfg.local.think === 'off' ? 'off' : 'on' },
     instructions: readInstructions(),
+    github: { hasToken: Boolean(githubToken()) },
+    mcp: { config: (() => { try { return fs.readFileSync(MCP_FILE, 'utf8'); } catch { return ''; } })(), file: MCP_FILE, servers: mcp.status() },
     effort: cfg.effort,
     maxCycles: cfg.maxCycles,
     memory: cfg.memory,
@@ -384,7 +389,17 @@ export async function startWeb({ cfg, mode, port = 0, host = '127.0.0.1', token,
       if (!Number.isFinite(n) || n < 0 || n > 2) throw new Error('Температура — число от 0 до 2');
       updates.LCC_LOCAL_TEMPERATURE = String(n);
     }
-    if (body.think !== undefined) updates.LCC_LOCAL_THINK = body.think === 'off' ? 'off' : '';
+    if (body.think !== undefined) updates.LCC_LOCAL_THINK = body.think === 'on' ? 'on' : 'off';
+    if (typeof body.githubToken === 'string' && body.githubToken.trim()) updates.LCC_GITHUB_TOKEN = body.githubToken.trim();
+    if (body.githubClear === true) updates.LCC_GITHUB_TOKEN = '';
+    if (body.mcpConfig !== undefined) {
+      // Сначала проверка: с ошибкой в настройках прежние серверы продолжают работать
+      const parsed = parseMcpConfig(body.mcpConfig);
+      fs.mkdirSync(CONFIG_DIR, { recursive: true });
+      if (Object.keys(parsed.mcpServers).length) fs.writeFileSync(MCP_FILE, `${JSON.stringify(parsed, null, 2)}\n`, { mode: 0o600 });
+      else fs.rmSync(MCP_FILE, { force: true });
+      mcp.start(cfg.cwd).then(pushState, pushState);
+    }
     if (body.instructions !== undefined) saveInstructions(body.instructions);
     if (body.model !== undefined) {
       updates.LCC_MODEL = String(body.model).trim();
@@ -484,6 +499,8 @@ export async function startWeb({ cfg, mode, port = 0, host = '127.0.0.1', token,
             const details = await probe.listModelsDetailed(AbortSignal.timeout(8000));
             return send(res, 200, { models: details.map((m) => m.name), details, current: cfg.provider === 'local' ? cfg.model : '' });
           }
+          case '/api/mcp':
+            return send(res, 200, { servers: mcp.status() });
           case '/api/chats':
             return send(res, 200, { chats: listChats() });
           case '/api/hf/search':
@@ -521,6 +538,10 @@ export async function startWeb({ cfg, mode, port = 0, host = '127.0.0.1', token,
           handleInput(text); // не ждём: результат придёт событиями
           return send(res, 202, { ok: true });
         }
+        case '/api/mcp/trust':
+          // Сервер, описанный в файлах проекта, запускается только после явного разрешения
+          await mcp.trust(String(body.name ?? ''));
+          return send(res, 200, { servers: mcp.status() });
         case '/api/retry': {
           if (running) return send(res, 409, { error: 'Дождитесь окончания текущей задачи или остановите её.' });
           const again = session.takeRetry();
@@ -649,6 +670,7 @@ export async function startWeb({ cfg, mode, port = 0, host = '127.0.0.1', token,
 
   for (const n of notices) hub.emit({ t: 'msg', level: 'warn', text: n });
   if (autoStop) scheduleStop(autoStop.startMs);
+  mcp.start(cfg.cwd).catch(logError); // внешние серверы инструментов (MCP) подключаются в фоне
   warmUp(); // модель загружается в память, пока пользователь ещё только смотрит на окно
 
   return {

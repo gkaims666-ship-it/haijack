@@ -89,7 +89,8 @@ export function buildConfig(cwd) {
       keepAlive: env.LCC_LOCAL_KEEP_ALIVE || '60m',
       temperature: Math.min(2, Math.max(0, num(env.LCC_LOCAL_TEMPERATURE, 0.2))),
       // Размышления локальной модели: '' — как решит модель, off — выключить (ответ начинается сразу)
-      think: /^(off|0|false|no)$/i.test(env.LCC_LOCAL_THINK || '') ? 'off' : '',
+      // По умолчанию выключены: так большая модель начинает отвечать без паузы. Включить: LCC_LOCAL_THINK=on
+      think: /^(on|1|true|yes|auto)$/i.test(env.LCC_LOCAL_THINK || '') ? '' : 'off',
     },
     apiKey: env.ANTHROPIC_API_KEY || '',
     authToken: env.ANTHROPIC_AUTH_TOKEN || '', // Bearer для прокси/кастомных шлюзов

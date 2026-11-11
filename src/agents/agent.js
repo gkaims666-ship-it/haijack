@@ -1,7 +1,7 @@
 // Базовый агент: цикл «модель -> tool_use -> tool_result -> модель» с потоковым выводом.
 
 import { buildSystemPrompt, AGENT_META } from './prompts.js';
-import { getTools, toApiTools, executeTool } from '../tools/index.js';
+import { getTools, toApiTools, executeTool, externalTools } from '../tools/index.js';
 import { readInstructions } from '../config.js';
 
 const CONTEXT_SOFT_LIMIT = 500_000; // символов истории, после которых старые выводы инструментов сжимаются
@@ -19,8 +19,7 @@ export class Agent {
   constructor({ role, toolNames, client, cfg, ui, usage, changes, memory }) {
     this.role = role;
     this.meta = AGENT_META[role];
-    this.tools = getTools(toolNames);
-    this.apiTools = toApiTools(this.tools);
+    this.baseTools = getTools(toolNames);
     this.client = client;
     this.cfg = cfg;
     this.ui = ui;
@@ -31,6 +30,10 @@ export class Agent {
     this.messages = [];
     this.system = this.#buildSystem();
   }
+
+  /** Свои инструменты и инструменты подключённых серверов MCP (их набор может меняться между задачами) */
+  get tools() { return [...this.baseTools, ...externalTools(this.role)]; }
+  get apiTools() { return toApiTools(this.tools); }
 
   #buildSystem() {
     const memory = this.cfg.memory && this.memory ? this.memory.read() : '';

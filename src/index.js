@@ -26,6 +26,7 @@ haijack v${VERSION} — терминальный ИИ-ассистент с 4 а
   lcc --app                 окно приложения с интерфейсом
   lcc --web                 интерфейс в браузере (http://127.0.0.1:<порт>)
   lcc --cwd <папка>         рабочая папка проекта
+  lcc mcp                   работать сервером MCP: так haijack подключают к Claude Code, Cursor и другим средам
 
 Опции:
   -m, --mode <auto|plan|solo>  режим (по умолчанию auto)
@@ -110,6 +111,12 @@ export async function main(argv = process.argv.slice(2), boot = {}) {
   try { args = parseArgs(argv); } catch (e) { console.error(e.message); return 2; }
   if (args.help) { console.log(USAGE); return 0; }
   if (args.version) { console.log(VERSION); return 0; }
+  if (args.rest[0] === 'mcp') {
+    // Сервер MCP: stdout занят протоколом, поэтому до этого места и дальше в него ничего не пишется
+    const { serveMcp } = await import('./mcp/server.js');
+    bootOk();
+    return serveMcp();
+  }
   if (args.selfCheck) {
     // Диагностика: та же самопроверка, что выполняется перед установкой доработанной версии
     const { prepareStaging } = await import('./self/improve.js');
@@ -229,6 +236,8 @@ export async function main(argv = process.argv.slice(2), boot = {}) {
   const renderer = new Renderer({ cfg, question: async () => 'n' });
   // В интерактивном режиме диалог с ассистентом сохраняется и продолжается после перезапуска
   const dialogFile = args.print ? undefined : path.join(CONFIG_DIR, 'session', 'solo.json');
+  const { mcp } = await import('./mcp/client.js');
+  await mcp.start(cfg.cwd).catch(() => {}); // внешние серверы инструментов (MCP)
   const orchestrator = new Orchestrator({ client, cfg, ui: renderer, usage, memory, dialogFile });
   const session = new Session({ cfg, orchestrator, usage, ui: renderer, mode: args.mode, memory });
   bootOk();
@@ -254,10 +263,12 @@ export async function main(argv = process.argv.slice(2), boot = {}) {
     renderer.error = (s) => { failed = true; origError(s); };
     await session.handle(args.print);
     process.off('SIGINT', onSigint);
+    mcp.stop();
     // Однократный запуск завершается сам: новая версия заработает при следующем запуске
     return failed || interrupted ? 1 : 0;
   }
 
   const outcome = await startRepl({ cfg, session, renderer, usage, notices });
+  mcp.stop();
   return outcome === 'restart' ? RESTART : 0;
 }
