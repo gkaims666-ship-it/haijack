@@ -200,7 +200,7 @@ test('самоулучшение через сессию: правка копи�
   assert.ok(ui.log.some((l) => /done:Установлена версия приложения v1/.test(l)));
   assert.ok(client.requests.some((r) => r.role === 'coder' && /Самопроверка приложения не прошла/.test(lastUserText(r.req))));
   // Агенты видели инструкции проекта приложения
-  assert.match(JSON.stringify(client.requests.find((r) => r.role === 'coder').req.system), /Local Claude Code — устройство и правила для агентов/);
+  assert.match(JSON.stringify(client.requests.find((r) => r.role === 'coder').req.system), /haijack — устройство и правила для агентов/);
 
   // Следующая доработка строится поверх установленной, а не поверх исходной
   assert.match(fs.readFileSync(path.join(prepareStaging(), 'src', 'usage.js'), 'utf8'), /MARK = 'improved'/);
@@ -240,8 +240,8 @@ test('main возвращает код 75 после установки ново
   });
   assert.equal(res.status, 0, res.stderr);
   // До отката работала доработанная версия, после перезапуска в том же процессе — заводская
-  const mod = res.stdout.indexOf(`Local Claude Code v${VERSION}-mod`);
-  const factory = res.stdout.indexOf(`Local Claude Code v${VERSION}\n`);
+  const mod = res.stdout.indexOf(`haijack v${VERSION}-mod`);
+  const factory = res.stdout.indexOf(`haijack v${VERSION}\n`);
   assert.ok(mod !== -1 && factory > mod, res.stdout);
   assert.match(res.stdout, /Работает доработанная версия v1/);
   assert.match(res.stdout, /После перезапуска будет работать заводская версия/);

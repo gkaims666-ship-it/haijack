@@ -1,9 +1,10 @@
 {
-  "name": "local-claude-code",
-  "version": "1.6.0",
-  "description": "Cross-platform (Windows / Android Termux / Linux / macOS) terminal AI coding assistant with a 4-agent pipeline. Zero dependencies.",
+  "name": "haijack",
+  "version": "1.7.0",
+  "description": "haijack — ИИ-ассистент для работы с кодом: четыре агента, окно приложения, Windows и Android. Без зависимостей.",
   "type": "module",
   "bin": {
+    "haijack": "bin/lcc.js",
     "lcc": "bin/lcc.js"
   },
   "main": "src/index.js",

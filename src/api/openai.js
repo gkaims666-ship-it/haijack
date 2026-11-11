@@ -426,11 +426,12 @@ export class OpenAIClient {
         const res = await fetch(`${this.origin}/api/version`, { signal: AbortSignal.timeout(3000) });
         yes = res.ok && typeof (await res.json()).version === 'string';
       } catch { /* не Ollama или сервер недоступен: об этом сообщит основной запрос */ }
-      // Отрицательный ответ не запоминаем: сервер мог быть ещё не запущен
-      if (!yes) return false;
-      this.ollama.set(key, true);
+      // Отрицательный ответ помним недолго: сервер мог быть ещё не запущен
+      this.ollama.set(key, { yes, at: Date.now() });
     }
-    return true;
+    const known = this.ollama.get(key);
+    if (!known.yes && Date.now() - known.at > 60000) { this.ollama.delete(key); return this.isOllama(); }
+    return known.yes;
   }
 
   /** Список моделей, установленных на сервере */
@@ -474,7 +475,8 @@ export class OpenAIClient {
       messages: textMode ? toTextToolMessages(openai, tools) : toOllamaMessages(openai),
       stream: true,
       keep_alive: '30m', // модель остаётся в памяти между шагами агента, а не загружается заново
-      options: { temperature: 0.2, top_p: 0.9, num_predict: maxTokens },
+      // Ответ не должен занимать больше половины контекста: иначе в нём не останется места для запроса
+      options: { temperature: 0.2, top_p: 0.9, num_predict: Math.min(maxTokens, Math.floor((this.local.numCtx || 16384) / 2)) },
     };
     // Размер контекста задаётся явно: по умолчанию Ollama выбирает его сама по объёму видеопамяти
     if (this.local.numCtx) body.options.num_ctx = this.local.numCtx;

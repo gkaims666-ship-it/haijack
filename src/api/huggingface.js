@@ -10,7 +10,7 @@ const PAGE = 30;
 async function getJson(url, signal) {
   let res;
   try {
-    res = await fetch(url, { headers: { accept: 'application/json', 'user-agent': 'local-claude-code' }, signal });
+    res = await fetch(url, { headers: { accept: 'application/json', 'user-agent': 'haijack' }, signal });
   } catch (err) {
     if (signal?.aborted) throw err;
     throw new Error(`Hugging Face недоступен: ${err.cause?.code || err.message}. Проверьте подключение к интернету.`);

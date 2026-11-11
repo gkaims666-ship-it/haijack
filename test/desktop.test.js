@@ -64,7 +64,7 @@ test('окно приложения: программа живёт, пока о�
     assert.equal(exitCode, null, `программа завершилась, хотя окно открыто:\n${output}`);
     const page = await fetch(url);
     assert.equal(page.status, 200);
-    assert.match(await page.text(), /<title>Local Claude Code<\/title>/);
+    assert.match(await page.text(), /<title>haijack<\/title>/);
 
     // «Окно» — подключение страницы к потоку событий
     const openWindow = async () => {

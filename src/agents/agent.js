@@ -51,11 +51,30 @@ export class Agent {
     this.system = this.#buildSystem();
   }
 
+  /**
+   * Сколько символов истории помещается в контекст модели. У облачных моделей он большой;
+   * у локальной задан настройкой и мал — без учёта этого сервер молча обрезал бы начало разговора,
+   * включая инструкции, и модель начинала бы вести себя непредсказуемо.
+   */
+  get #budget() {
+    if (this.cfg.provider !== 'local') return CONTEXT_SOFT_LIMIT;
+    // ~2.2 символа на токен для смеси кода и русского текста; половина контекста — под инструкции,
+    // описания инструментов и ответ модели
+    return Math.max(8000, Math.floor((this.cfg.local?.numCtx || 16384) * 2.2 * 0.5));
+  }
+
+  /** Предел для одного результата инструмента: он не должен в одиночку занять весь контекст */
+  get #resultLimit() {
+    return this.cfg.provider === 'local' ? Math.floor(this.#budget * 0.4) : Infinity;
+  }
+
   #compact() {
+    const budget = this.#budget;
     let size = JSON.stringify(this.messages).length;
-    if (size < CONTEXT_SOFT_LIMIT) return;
-    // Сжимаем самые старые tool_result, сохраняя последние 6 сообщений целиком
-    for (let i = 0; i < this.messages.length - 6 && size > CONTEXT_SOFT_LIMIT * 0.6; i++) {
+    if (size < budget) return;
+    // 1. Сокращаем самые старые результаты инструментов, сохраняя последние сообщения целиком
+    const keep = this.cfg.provider === 'local' ? 2 : 6;
+    for (let i = 0; i < this.messages.length - keep && size > budget * 0.6; i++) {
       const m = this.messages[i];
       if (m.role !== 'user' || !Array.isArray(m.content)) continue;
       for (const b of m.content) {
@@ -64,6 +83,17 @@ export class Agent {
           b.content = b.content.slice(0, 300) + '\n[старый вывод сокращён для экономии контекста]';
         }
       }
+    }
+    // 2. Если этого мало — убираем самые старые шаги целиком (вызов инструмента вместе с его результатом).
+    // Первое сообщение с задачей остаётся всегда.
+    while (size > budget && this.messages.length > 5) {
+      const call = this.messages[1];
+      const result = this.messages[2];
+      const isStep = call?.role === 'assistant' && result?.role === 'user' && Array.isArray(result.content)
+        && result.content.some((b) => b.type === 'tool_result');
+      if (!isStep) break;
+      this.messages.splice(1, 2);
+      size = JSON.stringify(this.messages).length;
     }
   }
 
@@ -143,7 +173,12 @@ export class Agent {
         this.ui.toolCall(this.meta, block);
         const res = await executeTool(block, this.tools, ctx);
         this.ui.toolResult(block, res);
-        results.push({ type: 'tool_result', tool_use_id: block.id, content: res.content, is_error: res.isError || undefined });
+        let content = res.content;
+        const limit = this.#resultLimit;
+        if (content.length > limit) {
+          content = `${content.slice(0, limit)}\n\n[вывод обрезан: показано ${limit} из ${content.length} символов. Контекст модели мал — читай файл частями (offset, limit) или уточни поиск.]`;
+        }
+        results.push({ type: 'tool_result', tool_use_id: block.id, content, is_error: res.isError || undefined });
       }
       // На каждый tool_use обязан быть tool_result, иначе API вернёт 400
       for (const block of toolUses.slice(results.length)) {
