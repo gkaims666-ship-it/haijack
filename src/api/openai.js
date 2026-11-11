@@ -133,10 +133,11 @@ export class TextFilter {
         this.skipSpace = false;
       }
       const think = buf.indexOf('<think>');
-      const call = buf.search(/<tool_call>|<function=/);
+      const call = buf.search(/<tool_call>|<function=|<\|tool_call\|>|<\|tool_call_start\|>|\[TOOL_CALLS\]/);
       const next = [think, call].filter((i) => i !== -1).sort((a, b) => a - b)[0];
       if (next === undefined) {
-        const keep = tailPrefix(buf, '<think>') || tailPrefix(buf, '<tool_call>') || tailPrefix(buf, '<function=');
+        const keep = tailPrefix(buf, '<think>') || tailPrefix(buf, '<tool_call>') || tailPrefix(buf, '<function=')
+          || tailPrefix(buf, '<|tool_call|>') || tailPrefix(buf, '<|tool_call_start|>') || tailPrefix(buf, '[TOOL_CALLS]');
         const out = keep ? buf.slice(0, buf.length - keep.length) : buf;
         visible += out; this.raw += out; this.pending = keep;
         return visible;
@@ -242,6 +243,9 @@ export function extractTextToolCalls(text, toolNames) {
   }
   return { calls, text: rest.trim() };
 }
+
+// Метки начала и конца реплик в шаблонах разных семейств моделей (ChatML, Llama 3, Gemma, Mistral, Phi)
+const SPECIAL_TOKENS = /<\|(?:im_start|im_end|endoftext|eot_id|eom_id|end|end_of_text|begin_of_text|start_header_id|end_header_id|assistant|user|system)\|>(?:assistant\n)?|<\/s>|<end_of_turn>|<start_of_turn>(?:model|user)?/g;
 
 const STOP_REASON = { tool_calls: 'tool_use', function_call: 'tool_use', length: 'max_tokens', stop: 'end_turn' };
 const isOom = (msg) => /out of memory|not enough memory|insufficient memory|requires more system memory|failed to allocate|cuda error/i.test(msg);
@@ -742,7 +746,7 @@ export class OpenAIClient {
   }
 
   /** Собирает ответ: текст без размышлений и вызовы инструментов (нативные или написанные текстом) */
-  #finish(filter, shown, toolUses, toolNames, finish, usage) {
+  #finish(filter, shown, toolUses, toolNames, finish, usage, handlers) {
     const content = [];
     let n = 0;
     const newId = () => `call_${Date.now().toString(36)}_${n++}`;
@@ -757,7 +761,11 @@ export class OpenAIClient {
     } else if (filter.mode === 'call') {
       text = shown; // нативные вызовы есть, а текстовый хвост — мусор
     }
-    text = text.trim();
+    // Служебные метки шаблона чата, которые сервер иногда пропускает в текст
+    text = text.replace(SPECIAL_TOKENS, '').trim();
+    // Показанный по ходу текст отличается от итогового (вызов инструмента был написан текстом, модель закрыла
+    // размышления без открывающего тега, просочились служебные метки) — экран получает чистый вариант
+    if (text !== shown.trim()) handlers?.onRewrite?.(text);
     if (text) content.push({ type: 'text', text });
     content.push(...toolUses);
     return { content, stop_reason: toolUses.length ? 'tool_use' : STOP_REASON[finish] || 'end_turn', usage };
@@ -812,7 +820,7 @@ export class OpenAIClient {
     }
     handle(buf);
     emit(filter.end());
-    return this.#finish(filter, shown, toolUses, toolNames, finish, usage);
+    return this.#finish(filter, shown, toolUses, toolNames, finish, usage, handlers);
   }
 
   async #consume(body, handlers, toolNames, alive) {
@@ -878,6 +886,6 @@ export class OpenAIClient {
       }
       toolUses.push({ type: 'tool_use', id: call.id, name: call.name, input });
     }
-    return this.#finish(filter, shown, toolUses, toolNames, finish, usage);
+    return this.#finish(filter, shown, toolUses, toolNames, finish, usage, handlers);
   }
 }

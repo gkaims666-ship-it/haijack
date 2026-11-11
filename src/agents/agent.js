@@ -188,6 +188,7 @@ export class Agent {
             onToolUseStart: () => { first(); this.ui.stopSpinner(); },
             onRetry: (i) => this.ui.retry(i),
             onNotice: (t) => this.ui.warn(t),
+            onRewrite: (t) => this.ui.agentTextRewrite?.(this.meta, t),
           },
         );
       } finally {

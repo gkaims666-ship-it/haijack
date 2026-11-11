@@ -746,12 +746,13 @@ textarea.input { padding: 10px 14px; min-height: 96px; resize: vertical; line-he
   function renderMarkdown(body, full) {
     body.textContent = '';
     body.className = 'body md';
-    var lines = full.replace(/\r/g, '').split('\n');
+    // Первая строка «РЕЖИМ: …» — служебная пометка Architect для программы, читателю она не нужна
+    var lines = full.replace(/\r/g, '').replace(/^\s*РЕЖИМ:[ \t]*\S+[ \t]*\n?/, '').split('\n');
     var i = 0, para = [], list = null, listTag = '';
     function flushPara() {
       if (!para.length) return;
       var text = para.join('\n');
-      var p = el('p', /^(ВЕРДИКТ|СТАТУС|РЕЖИМ):/.test(text) ? 'verdict' : '');
+      var p = el('p', /^(ВЕРДИКТ|СТАТУС):/.test(text) ? 'verdict' : '');
       inline(p, text); body.appendChild(p); para = [];
     }
     function flushList() { if (list) { body.appendChild(list); list = null; } }
@@ -1066,6 +1067,13 @@ textarea.input { padding: 10px 14px; min-height: 96px; resize: vertical; line-he
           thinkText.appendData(thinkText.data ? ev.delta : ev.delta.replace(/^\s+/, ''));
           thinkEl.lastChild.scrollTop = thinkEl.lastChild.scrollHeight;
         });
+        break;
+      case 'retext':
+        // Показанный по ходу текст заменяется итоговым: без вызова инструмента, написанного текстом, и служебных меток
+        if (sayEl && sayRole === ev.role) {
+          if (ev.text.trim()) sayText.data = ev.text;
+          else { sayEl.remove(); sayEl = null; sayText = null; sayRole = null; }
+        }
         break;
       case 'stats':
         if (ev.input) { lastInput = ev.input; drawFoot(); }
