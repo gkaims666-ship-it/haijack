@@ -5,16 +5,17 @@ import { globTool, grepTool } from './search.js';
 import { runCommand } from './command.js';
 import { fetchUrl } from './web.js';
 import { githubRead, githubWrite } from './github.js';
+import { updatePlan } from './plan.js';
 import { mcp } from '../mcp/client.js';
 
-export const ALL_TOOLS = [readFile, listDir, globTool, grepTool, writeFile, editFile, runCommand, fetchUrl, githubRead, githubWrite];
+export const ALL_TOOLS = [readFile, listDir, globTool, grepTool, writeFile, editFile, runCommand, fetchUrl, githubRead, githubWrite, updatePlan];
 const byName = new Map(ALL_TOOLS.map((t) => [t.name, t]));
 
 export const TOOLSETS = {
   // fetch_url есть у всех: он ничего не меняет на диске, но всегда требует подтверждения
   architect: ['read_file', 'list_dir', 'glob', 'grep', 'fetch_url', 'github_read'],
   reviewer: ['read_file', 'list_dir', 'glob', 'grep', 'fetch_url', 'github_read'],
-  coder: ['read_file', 'list_dir', 'glob', 'grep', 'write_file', 'edit_file', 'run_command', 'fetch_url', 'github_read', 'github_write'],
+  coder: ['read_file', 'list_dir', 'glob', 'grep', 'write_file', 'edit_file', 'run_command', 'fetch_url', 'github_read', 'github_write', 'update_plan'],
   executor: ['read_file', 'list_dir', 'glob', 'grep', 'run_command'],
   all: ALL_TOOLS.map((t) => t.name),
 };
