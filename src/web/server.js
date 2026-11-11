@@ -337,7 +337,8 @@ export async function startWeb({ cfg, mode, port = 0, host = '127.0.0.1', token,
     pushState();
     let outcome;
     try {
-      const isTask = !/^[/!]/.test(text.trim()) || /^\/(loop|self)\s+\S/i.test(text.trim());
+      // /self status, undo и reset — управление версиями, а не задача для модели
+      const isTask = !/^[/!]/.test(text.trim()) || /^\/loop\s+\S/i.test(text.trim()) || /^\/self\s+(?!(status|undo|reset)\s*$)\S/i.test(text.trim());
       if (isTask && !hasCredentials(cfg)) {
         ui.warn('Сначала настройте доступ к модели: откройте настройки.');
         return;

@@ -5,6 +5,7 @@
 // в системный промт каждого агента и не стирается при очистке диалога или перезапуске.
 // Журнал — запись о каждой выполненной задаче и её результате.
 
+import { writeFileAtomic } from './tools/fsutil.js';
 import fs from 'node:fs';
 import path from 'node:path';
 import { CONFIG_DIR } from './config.js';
@@ -40,12 +41,16 @@ export class Memory {
   }
 
   read() {
-    try { return fs.readFileSync(this.file, 'utf8').trim(); } catch { return ''; }
+    // Файл могли править вручную: больше установленного предела в работу не берётся
+    try { return fs.readFileSync(this.file, 'utf8').trim().slice(0, MEMORY_LIMIT); } catch { return ''; }
   }
 
   write(text) {
-    fs.mkdirSync(this.dir, { recursive: true });
-    fs.writeFileSync(this.file, text.trim().slice(0, MEMORY_LIMIT) + '\n');
+    try {
+      fs.mkdirSync(this.dir, { recursive: true });
+      writeFileAtomic(this.file, text.trim().slice(0, MEMORY_LIMIT) + '\n');
+      return true;
+    } catch { return false; } // нет места или доступа: память не обновилась, но работа продолжается
   }
 
   clear() {
@@ -63,7 +68,10 @@ export class Memory {
   recent(n = 10) {
     try {
       const lines = fs.readFileSync(this.journalFile, 'utf8').split('\n').filter(Boolean);
-      return lines.slice(-n).map((l) => { try { return JSON.parse(l); } catch { return null; } }).filter(Boolean);
+      const count = Math.min(200, Math.max(1, Math.floor(Number(n)) || 10));
+      // Сначала отбрасываются испорченные строки, потом берутся последние записи
+      return lines.slice(-2000).map((l) => { try { return JSON.parse(l); } catch { return null; } })
+        .filter((e) => e && typeof e === 'object' && typeof e.time === 'string').slice(-count);
     } catch {
       return [];
     }

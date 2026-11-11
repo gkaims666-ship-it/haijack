@@ -229,3 +229,59 @@ test('ответ без артефактов: служебные метки, в�
     assert.equal(r.screen, plain);
   } finally { server.close(); }
 });
+
+test('повреждённые файлы состояния не мешают запуску: испорченное пропускается, целое сохраняется', async () => {
+  const { EventHub } = await import('../src/web/hub.js');
+  const { Memory } = await import('../src/memory.js');
+  const { writeFileAtomic } = await import('../src/tools/fsutil.js');
+  const dir = tmp();
+  const file = path.join(dir, 'events.jsonl');
+  fs.writeFileSync(file, [
+    '{"t":"user","text":"цело"}', '{обрыв', '', '[1,2]', 'null', '"строка"', '42',
+    '{"t":"text","role":"architect","delta":42}', '{"t":"text","role":"architect","delta":"ответ"}',
+    '{"t":"summary"}', '{"t":"tool"}', '{"t":"msg","level":"info"}', '{"нет":"типа"}', '{"t":"stats","role":"architect","input":5}',
+  ].join('\n'));
+  const hub = new EventHub({ file });
+  assert.deepEqual(hub.buffer.map((e) => e.t), ['user', 'text', 'stats']);
+  assert.deepEqual(hub.buffer.map((e) => e.seq), [1, 2, 3]);
+  // Файл переписан уже без мусора
+  assert.equal(fs.readFileSync(file, 'utf8').split('\n').filter(Boolean).length, 3);
+
+  // Запись целиком или никак: при сбое прежний файл остаётся, временный убирается
+  const target = path.join(dir, 'state.json');
+  writeFileAtomic(target, 'первая версия');
+  assert.throws(() => writeFileAtomic(target, { toString() { throw new Error('сбой'); } }));
+  assert.equal(fs.readFileSync(target, 'utf8'), 'первая версия');
+  assert.deepEqual(fs.readdirSync(dir).filter((f) => f.endsWith('.tmp')), []);
+
+  // Память и журнал: огромный или испорченный файл не ломает работу
+  const memory = new Memory(dir);
+  fs.writeFileSync(path.join(dir, 'memory.md'), 'я'.repeat(500000));
+  assert.ok(memory.read().length < 100000);
+  fs.writeFileSync(path.join(dir, 'journal.jsonl'), '42\n"x"\n{"task":"без времени"}\n{"time":"2026-01-01T10:00:00Z","task":"цела","done":true}\n{обрыв\n');
+  assert.deepEqual(memory.recent(-1).map((e) => e.task), ['цела']);
+  assert.deepEqual(memory.recent('много').map((e) => e.task), ['цела']);
+  // Папка на месте файла памяти: запись не удаётся, но исключения нет
+  const blocked = new Memory(tmp());
+  fs.mkdirSync(path.join(blocked.dir, 'memory.md'));
+  assert.equal(blocked.write('текст'), false);
+  assert.equal(blocked.read(), '');
+});
+
+test('веб: /self status работает и без настроенной модели, а задача на самоулучшение её требует', async () => {
+  saveSettings({ LCC_PROVIDER: 'local', LCC_MODEL: '' }); // доступ к модели не настроен
+  const web = await startWeb({ cfg: buildConfig(tmp()), persist: false });
+  const send = async (text) => {
+    const before = web.hub.buffer.length;
+    await fetch(`http://127.0.0.1:${web.port}/api/input?t=${web.token}`, { method: 'POST', headers: { 'content-type': 'application/json', 'x-lcc': '1' }, body: JSON.stringify({ text }) });
+    await until(async () => !(await (await fetch(`http://127.0.0.1:${web.port}/api/state?t=${web.token}`)).json()).busy, 'окончание');
+    return web.hub.buffer.slice(before).filter((e) => e.t === 'msg').map((e) => e.text).join('\n');
+  };
+  try {
+    assert.match(await send('/self status'), /заводская версия/);
+    assert.match(await send('/self   STATUS  '), /заводская версия/);
+    assert.match(await send('/self undo'), /откатывать нечего/);
+    assert.match(await send('/self сделай кнопку крупнее'), /Сначала настройте доступ к модели/);
+    assert.match(await send('/loop проверяй тесты'), /Сначала настройте доступ к модели/);
+  } finally { web.close(); await web.closed; }
+});

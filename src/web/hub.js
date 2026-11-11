@@ -1,6 +1,7 @@
 // Шина событий веб-интерфейса и рендерер, который вместо терминала шлёт события в браузер.
 // Рендерер реализует тот же интерфейс, что и терминальный (src/ui/renderer.js).
 
+import { writeFileAtomic } from '../tools/fsutil.js';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -10,6 +11,20 @@ const BUFFER_LIMIT = 6000;   // событий в памяти
 const PERSIST_LIMIT = 3000;  // событий, восстанавливаемых с диска
 
 const strip = ({ seq, ...event }) => event; // номера на диске не нужны: они назначаются заново при загрузке
+
+/**
+ * Годится ли строка сохранённой истории для показа. Файл мог быть повреждён (сбой питания, ручная правка):
+ * испорченные записи пропускаются, остальная история показывается.
+ */
+function validEvent(e) {
+  if (!e || typeof e !== 'object' || Array.isArray(e) || typeof e.t !== 'string') return false;
+  if (e.t === 'text' || e.t === 'think') return typeof e.delta === 'string' && typeof e.role === 'string';
+  if (e.t === 'user' || e.t === 'msg') return typeof e.text === 'string';
+  if (e.t === 'cmd') return typeof e.chunk === 'string';
+  if (e.t === 'tool') return typeof e.name === 'string';
+  if (e.t === 'summary') return Array.isArray(e.files);
+  return true;
+}
 
 export class EventHub {
   /**
@@ -33,7 +48,7 @@ export class EventHub {
     let events = [];
     try {
       events = fs.readFileSync(this.file, 'utf8').split('\n').filter(Boolean)
-        .map((l) => { try { return JSON.parse(l); } catch { return null; } }).filter(Boolean);
+        .map((l) => { try { return JSON.parse(l); } catch { return null; } }).filter(validEvent);
     } catch { return; }
     const answered = new Set(events.filter((e) => e.t === 'askDone').map((e) => e.id));
     events = events.filter((e) => (e.t !== 'ask' && e.t !== 'askDone') || answered.has(e.id));
@@ -49,7 +64,7 @@ export class EventHub {
     if (!this.file) return;
     try {
       fs.mkdirSync(path.dirname(this.file), { recursive: true });
-      fs.writeFileSync(this.file, this.buffer.map((e) => JSON.stringify(strip(e))).join('\n') + (this.buffer.length ? '\n' : ''));
+      writeFileAtomic(this.file, this.buffer.map((e) => JSON.stringify(strip(e))).join('\n') + (this.buffer.length ? '\n' : ''));
     } catch { /* сохранение диалога — удобство, а не необходимость */ }
   }
 

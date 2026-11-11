@@ -143,6 +143,7 @@ export class Session {
     if (!text) return undefined;
     let result;
     if (text.startsWith('/')) result = await this.#command(text);
+    else if (text.startsWith('!') && !text.slice(1).trim()) this.ui.info('После «!» напишите команду оболочки, например: !git status');
     else if (text.startsWith('!')) result = await this.#shell(text.slice(1).trim());
     else result = await this.#guard((signal) => this.#task(text, signal));
     if (this.restartRequested) return 'restart';

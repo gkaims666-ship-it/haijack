@@ -1,5 +1,6 @@
 // Конфигурация: .env (проект и ~/.lcc), переменные окружения, интерактивный запрос ключа.
 
+import { writeFileAtomic } from './tools/fsutil.js';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -221,6 +222,6 @@ export function saveSettings(updates) {
       process.env[k] = String(v);
     }
   }
-  fs.writeFileSync(GLOBAL_ENV, lines.join('\n') + (lines.length ? '\n' : ''), { mode: 0o600 });
+  writeFileAtomic(GLOBAL_ENV, lines.join('\n') + (lines.length ? '\n' : ''), { mode: 0o600 });
   try { fs.chmodSync(GLOBAL_ENV, 0o600); } catch { /* Windows */ }
 }
