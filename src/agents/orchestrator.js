@@ -84,6 +84,23 @@ export class Orchestrator {
     } catch { /* файла нет или он повреждён — начинаем с чистого диалога */ }
   }
 
+  /** Переключает на диалог другого чата: история агентов сбрасывается, диалог ассистента читается из файла */
+  openDialog(file) {
+    for (const a of Object.values(this.agents)) a.reset();
+    this.history = [];
+    this.changes.clear();
+    this.dialogFile = file;
+    this.#loadDialog();
+  }
+
+  /**
+   * Прогрев локальной модели под следующую задачу: сервер заранее читает инструкции агента,
+   * который ответит первым (ассистент в режиме одного агента, иначе Architect).
+   */
+  prime(mode, signal) {
+    return mode === 'solo' ? this.agents.solo.prime(signal) : this.agents.architect.prime(signal, { fresh: true });
+  }
+
   /** Сменить рабочую папку: агенты пересобирают системный промт под новый проект */
   setCwd(cwd) {
     this.cfg.cwd = cwd;

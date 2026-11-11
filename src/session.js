@@ -38,6 +38,7 @@ export const HELP = `
   /memory                 показать долговременную память
   /forget                 стереть долговременную память
   /journal                последние задачи и их результаты
+  /retry                  выполнить последнюю задачу заново
   /clear                  очистить диалог (опыт перед этим сохраняется в память)
 
 Прочее:
@@ -98,6 +99,17 @@ export class Session {
     };
   }
 
+  /**
+   * Готовит повтор последней задачи: в режиме одного агента прежний ответ убирается из диалога,
+   * чтобы модель ответила заново, а не продолжила разговор.
+   * @returns {string|null} текст задачи для повторной отправки
+   */
+  takeRetry() {
+    if (!this.lastTask) return null;
+    if (this.mode === 'solo' && this.target === 'project') this.orchestrator.agents.solo.rewind();
+    return this.lastTask;
+  }
+
   /** Обрабатывает строку ввода. Возвращает 'exit' или 'restart', если сессию надо завершить. */
   async handle(input) {
     const text = input.trim();
@@ -138,6 +150,7 @@ export class Session {
    * предлагает выполнить её над кодом приложения — помнить про переключатель не нужно.
    */
   async #task(text, signal) {
+    this.lastTask = text;
     if (this.target === 'project' && this.mode !== 'solo' && this.selfHint && this.ui.canAsk && looksLikeSelfTask(text)) {
       if (await this.ui.confirm('Похоже, задача про само приложение. Выполнить её над кодом приложения — с самопроверкой и установкой новой версии?')) {
         return this.#selfTask(text, signal);
@@ -291,6 +304,11 @@ export class Session {
         cfg.autoApprove = !cfg.autoApprove;
         ui.info(`Автоподтверждение: ${cfg.autoApprove ? 'ВКЛ (опасные команды всё равно спрашиваются)' : 'выкл'}`);
         break;
+      case 'retry': {
+        const again = this.takeRetry();
+        if (!again) { ui.info('Повторять пока нечего: задач в этой сессии не было.'); break; }
+        return this.#guard((signal) => this.#task(again, signal));
+      }
       case 'model':
         if (!arg) ui.info(Object.entries(cfg.models).map(([k, v]) => `${k}: ${v}`).join('\n'));
         else {

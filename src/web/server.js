@@ -13,7 +13,7 @@ import path from 'node:path';
 import { PAGE } from './page.js';
 import { EventHub, WebRenderer } from './hub.js';
 import { Session, MODES, TARGETS } from '../session.js';
-import { hasCredentials, saveSettings, refreshConfig, CONFIG_DIR } from '../config.js';
+import { hasCredentials, saveSettings, refreshConfig, readInstructions, saveInstructions, CONFIG_DIR } from '../config.js';
 import { ModelClient, OpenAIClient } from '../api/index.js';
 import { checkLocalServer, pullModel, ollamaLoadWarning, MODEL_NAME } from '../api/openai.js';
 import { searchModels, modelVariants } from '../api/huggingface.js';
@@ -71,15 +71,29 @@ const isHttpUrl = (v) => /^https?:\/\/[^\s/]+/i.test(v);
 /**
  * Запускает веб-режим. Возвращает { urls, port, token, close(), closed: Promise<'stop'|'restart'> }.
  */
-export async function startWeb({ cfg, mode, port = 0, host = '127.0.0.1', token, notices = [], persist = true, autoStop = null }) {
+export async function startWeb({ cfg, mode, port = 0, host = '127.0.0.1', token, notices = [], persist = true, autoStop = null, warm = !process.env.LCC_NO_WARM }) {
   // persist: диалог сохраняется на диск и восстанавливается после перезапуска
-  const hub = new EventHub(persist ? { file: path.join(CONFIG_DIR, 'session', 'events.jsonl') } : {});
+  // Чаты: у каждого свой файл событий и свой диалог ассистента. Первый чат (main) лежит на прежнем месте.
+  const sessionDir = path.join(CONFIG_DIR, 'session');
+  const chatsDir = path.join(sessionDir, 'chats');
+  const chatFiles = (id) => (id === 'main'
+    ? { events: path.join(sessionDir, 'events.jsonl'), solo: path.join(sessionDir, 'solo.json') }
+    : { events: path.join(chatsDir, `${id}.jsonl`), solo: path.join(chatsDir, `${id}.solo.json`) });
+  const CHAT_ID = /^(main|c[a-z0-9]{6,16})$/;
+  let chatId = 'main';
+  if (persist) {
+    try {
+      const saved = fs.readFileSync(path.join(sessionDir, 'current'), 'utf8').trim();
+      if (CHAT_ID.test(saved) && fs.existsSync(chatFiles(saved).events)) chatId = saved;
+    } catch { /* первого запуска или файла нет — основной чат */ }
+  }
+  const hub = new EventHub(persist ? { file: chatFiles(chatId).events } : {});
   const ui = new WebRenderer({ cfg, hub });
   const usage = new Usage();
   const memory = new Memory();
   const client = new ModelClient(cfg);
   // Диалог с ассистентом (режим «Один агент») тоже переживает перезапуск
-  const dialogFile = persist ? path.join(CONFIG_DIR, 'session', 'solo.json') : undefined;
+  const dialogFile = persist ? chatFiles(chatId).solo : undefined;
   const orchestrator = new Orchestrator({ client, cfg, ui, usage, memory, dialogFile });
   const session = new Session({ cfg, orchestrator, usage, ui, mode, memory });
   session.onClear = () => hub.clear();
@@ -91,8 +105,128 @@ export async function startWeb({ cfg, mode, port = 0, host = '127.0.0.1', token,
   const snapshot = () => ({
     t: 'state', ...session.state(), busy: running, needsSetup: !hasCredentials(cfg),
     tokens: usage.totals(), bootId, pull: pullView(), windows: clients, // windows — сколько окон сейчас подключено
+    modelState: modelState.status, modelNote: modelState.note, numCtx: cfg.provider === 'local' ? cfg.local.numCtx : 0,
+    chat: chatId, chats: persist,
   });
   const pushState = () => hub.emit(snapshot(), { volatile: true });
+
+  // ---------- чаты ----------
+  function chatTitle(file) {
+    try {
+      const fd = fs.openSync(file, 'r');
+      const buf = Buffer.alloc(65536);
+      const n = fs.readSync(fd, buf, 0, buf.length, 0);
+      fs.closeSync(fd);
+      for (const line of buf.toString('utf8', 0, n).split('\n')) {
+        if (!line.includes('"t":"user"')) continue;
+        try {
+          const ev = JSON.parse(line);
+          const text = String(ev.text || '').split('\n# Вложение:')[0].trim().replace(/\s+/g, ' ');
+          if (ev.t === 'user' && text && !/^[/!]/.test(text)) return text.slice(0, 80);
+        } catch { /* строка обрезана границей чтения */ }
+      }
+    } catch { /* файла нет */ }
+    return '';
+  }
+  function listChats() {
+    if (!persist) return [];
+    const ids = new Set(['main', chatId]);
+    try { for (const f of fs.readdirSync(chatsDir)) { const m = /^(c[a-z0-9]{6,16})\.jsonl$/.exec(f); if (m) ids.add(m[1]); } } catch { /* чатов ещё нет */ }
+    const out = [];
+    for (const id of ids) {
+      const file = chatFiles(id).events;
+      let updated = 0;
+      try { updated = fs.statSync(file).mtimeMs; } catch { /* пустой чат без файла */ }
+      const title = id === chatId ? currentTitle() : chatTitle(file);
+      if (!title && id !== chatId) {
+        // Пустые чаты не копятся: их файлы убираются
+        if (id !== 'main') for (const f of Object.values(chatFiles(id))) fs.rmSync(f, { force: true });
+        continue;
+      }
+      out.push({ id, title: title || 'Новый чат', updated, current: id === chatId });
+    }
+    return out.sort((a, b) => (b.current - a.current) || (b.updated - a.updated));
+  }
+  const currentTitle = () => {
+    const first = hub.buffer.find((e) => e.t === 'user' && !/^[/!]/.test(String(e.text || '').trim()));
+    return first ? String(first.text).split('\n# Вложение:')[0].trim().replace(/\s+/g, ' ').slice(0, 80) : '';
+  };
+  function openChat(id) {
+    hub.flush();
+    chatId = id;
+    hub.open(chatFiles(id).events);
+    orchestrator.openDialog(chatFiles(id).solo);
+    session.lastTask = null;
+    try { fs.mkdirSync(sessionDir, { recursive: true }); fs.writeFileSync(path.join(sessionDir, 'current'), id); } catch { /* выбор чата не сохранится — не страшно */ }
+    hub.emit({ t: 'reload' }, { volatile: true }); // страницы перечитывают историю с начала
+    pushState();
+    primeSoon();
+  }
+  const newChatId = () => `c${Date.now().toString(36)}${crypto.randomBytes(2).toString('hex')}`;
+
+  // ---------- локальная модель: загрузка в память и прогрев ----------
+  // status: '' — неизвестно (не Ollama или не локальная модель), loading — загружается в память,
+  // ready — в памяти и готова отвечать, error — загрузить не удалось (причина в note)
+  let modelState = { status: '', note: '' };
+  let warmCtl = null;
+  let primeCtl = null;
+  let primeTimer = null;
+  const same = (a, b) => a === b || a === `${b}:latest` || `${a}:latest` === b;
+
+  /** Роли и запасная модель, указывающие на неустановленные модели, переводятся на основную: одной модели достаточно */
+  function reconcile(installed) {
+    const has = (name) => installed.some((m) => same(m, name));
+    for (const role of Object.keys(cfg.models)) if (!has(cfg.models[role])) cfg.models[role] = cfg.model;
+    if (cfg.local.fallbackModel && !has(cfg.local.fallbackModel)) cfg.local.fallbackModel = '';
+  }
+
+  async function warmUp({ unload = '' } = {}) {
+    warmCtl?.abort();
+    primeCtl?.abort();
+    if (!warm || cfg.provider !== 'local') { modelState = { status: '', note: '' }; pushState(); return; }
+    const ac = new AbortController();
+    warmCtl = ac;
+    modelState = { status: cfg.model ? 'loading' : '', note: '' };
+    pushState();
+    try {
+      const health = await checkLocalServer(cfg.local, cfg.model, ac.signal);
+      if (ac.signal.aborted) return;
+      if (!health.models.length && !health.ok) { modelState = { status: 'error', note: health.problem }; pushState(); return; }
+      if (!health.ok && health.models.length === 1) {
+        // Установлена одна модель — выбирать не из чего, работаем с ней
+        const only = health.models[0];
+        if (cfg.model) hub.emit({ t: 'msg', level: 'warn', text: `Модель ${cfg.model} на сервере не найдена. Использую единственную установленную: ${only}.` });
+        saveSettings({ LCC_MODEL: only, LCC_MODEL_ARCHITECT: '', LCC_MODEL_CODER: '', LCC_MODEL_REVIEWER: '', LCC_MODEL_EXECUTOR: '', LCC_MODEL_SOLO: '' });
+        refreshConfig(cfg);
+      } else if (!health.ok) {
+        modelState = { status: 'error', note: cfg.model ? `Модель ${cfg.model} не скачана. Выберите другую из установленных.` : 'Выберите модель.' };
+        pushState();
+        return;
+      }
+      reconcile(health.models);
+      if (unload && !same(unload, cfg.model)) await client.local.unload(unload);
+      const native = await client.local.warm(cfg.model, ac.signal);
+      if (ac.signal.aborted) return;
+      modelState = { status: native ? 'ready' : '', note: native ? await ollamaLoadWarning(cfg.local, cfg.model) : '' };
+    } catch (err) {
+      if (ac.signal.aborted) return;
+      modelState = { status: 'error', note: err.message };
+    }
+    pushState();
+    primeSoon();
+  }
+
+  /** Пока пользователь читает ответ или печатает, модель заранее читает инструкции следующего агента */
+  function primeSoon() {
+    clearTimeout(primeTimer);
+    if (!warm) return;
+    primeTimer = setTimeout(() => {
+      if (running || closing || cfg.provider !== 'local' || modelState.status !== 'ready') return;
+      primeCtl?.abort();
+      primeCtl = new AbortController();
+      orchestrator.prime(session.mode, primeCtl.signal);
+    }, 400);
+  }
 
   // ---------- скачивание модели ----------
   // Одна загрузка за раз. Идёт независимо от задач: модель можно скачать ещё на экране входа.
@@ -133,6 +267,9 @@ export async function startWeb({ cfg, mode, port = 0, host = '127.0.0.1', token,
     if (closing) return;
     closing = true;
     clearTimeout(stopTimer);
+    clearTimeout(primeTimer);
+    warmCtl?.abort();
+    primeCtl?.abort();
     session.abort();
     pull?.controller.abort();
     hub.cancelAsks('no');
@@ -169,6 +306,8 @@ export async function startWeb({ cfg, mode, port = 0, host = '127.0.0.1', token,
   // ---------- ввод ----------
   async function handleInput(text) {
     running = true;
+    clearTimeout(primeTimer);
+    primeCtl?.abort(); // настоящий запрос важнее прогрева
     hub.emit({ t: 'user', text });
     pushState();
     let outcome;
@@ -187,6 +326,7 @@ export async function startWeb({ cfg, mode, port = 0, host = '127.0.0.1', token,
       running = false;
       hub.flush();
       pushState();
+      primeSoon();
     }
     // Небольшая пауза: последние сообщения должны успеть уйти в браузер до закрытия соединений
     if (outcome === 'restart') setTimeout(() => shutdown('restart'), 150);
@@ -200,7 +340,8 @@ export async function startWeb({ cfg, mode, port = 0, host = '127.0.0.1', token,
     model: cfg.model,
     models: cfg.models,
     anthropic: { hasKey: Boolean(cfg.apiKey || cfg.authToken), baseUrl: cfg.baseUrl },
-    local: { baseUrl: cfg.local.baseUrl, hasKey: Boolean(cfg.local.apiKey), numCtx: cfg.local.numCtx },
+    local: { baseUrl: cfg.local.baseUrl, hasKey: Boolean(cfg.local.apiKey), numCtx: cfg.local.numCtx, temperature: cfg.local.temperature, think: cfg.local.think },
+    instructions: readInstructions(),
     effort: cfg.effort,
     maxCycles: cfg.maxCycles,
     memory: cfg.memory,
@@ -238,6 +379,13 @@ export async function startWeb({ cfg, mode, port = 0, host = '127.0.0.1', token,
       if (!Number.isInteger(n) || n < 2048 || n > 1048576) throw new Error('Размер контекста — целое число от 2048 до 1048576');
       updates.LCC_LOCAL_NUM_CTX = String(n);
     }
+    if (body.temperature !== undefined) {
+      const n = Number(body.temperature);
+      if (!Number.isFinite(n) || n < 0 || n > 2) throw new Error('Температура — число от 0 до 2');
+      updates.LCC_LOCAL_TEMPERATURE = String(n);
+    }
+    if (body.think !== undefined) updates.LCC_LOCAL_THINK = body.think === 'off' ? 'off' : '';
+    if (body.instructions !== undefined) saveInstructions(body.instructions);
     if (body.model !== undefined) {
       updates.LCC_MODEL = String(body.model).trim();
       // Единая модель заменяет прежние настройки по ролям
@@ -333,8 +481,11 @@ export async function startWeb({ cfg, mode, port = 0, host = '127.0.0.1', token,
             const base = cleanUrl(url.searchParams.get('url') || cfg.local.baseUrl);
             if (!isHttpUrl(base)) return send(res, 400, { error: 'Адрес сервера моделей должен начинаться с http:// или https://' });
             const probe = new OpenAIClient({ local: { baseUrl: base, apiKey: url.searchParams.get('key') || cfg.local.apiKey } });
-            return send(res, 200, { models: await probe.listModels(AbortSignal.timeout(8000)) });
+            const details = await probe.listModelsDetailed(AbortSignal.timeout(8000));
+            return send(res, 200, { models: details.map((m) => m.name), details, current: cfg.provider === 'local' ? cfg.model : '' });
           }
+          case '/api/chats':
+            return send(res, 200, { chats: listChats() });
           case '/api/hf/search':
             // Каталог Hugging Face: все общедоступные модели в формате GGUF, по запросу и страницами
             return send(res, 200, await searchModels(url.searchParams.get('q') || '', { cursor: url.searchParams.get('cursor') || '', signal: AbortSignal.timeout(15000) }));
@@ -370,6 +521,51 @@ export async function startWeb({ cfg, mode, port = 0, host = '127.0.0.1', token,
           handleInput(text); // не ждём: результат придёт событиями
           return send(res, 202, { ok: true });
         }
+        case '/api/retry': {
+          if (running) return send(res, 409, { error: 'Дождитесь окончания текущей задачи или остановите её.' });
+          const again = session.takeRetry();
+          if (!again) return send(res, 400, { error: 'Повторять пока нечего.' });
+          handleInput(again);
+          return send(res, 202, { ok: true });
+        }
+        case '/api/model': {
+          // Быстрое переключение локальной модели: прежняя выгружается из памяти, новая загружается сразу
+          if (running) return send(res, 409, { error: 'Модель нельзя менять, пока выполняется задача.' });
+          const model = String(body.model ?? '').trim();
+          if (!MODEL_NAME.test(model)) return send(res, 400, { error: 'Некорректное имя модели' });
+          const previous = cfg.provider === 'local' ? cfg.model : '';
+          saveSettings({ LCC_PROVIDER: 'local', LCC_MODEL: model, LCC_MODEL_ARCHITECT: '', LCC_MODEL_CODER: '', LCC_MODEL_REVIEWER: '', LCC_MODEL_EXECUTOR: '', LCC_MODEL_SOLO: '' });
+          refreshConfig(cfg);
+          for (const a of Object.values(orchestrator.agents)) a.refreshSystem();
+          warmUp({ unload: previous });
+          return send(res, 200, snapshot());
+        }
+        case '/api/chats/new':
+        case '/api/chats/open':
+        case '/api/chats/delete': {
+          if (!persist) return send(res, 400, { error: 'Чаты недоступны в этом режиме.' });
+          if (running) return send(res, 409, { error: 'Дождитесь окончания текущей задачи или остановите её.' });
+          if (url.pathname === '/api/chats/new') {
+            if (currentTitle()) openChat(newChatId()); // пустой чат уже открыт — второй не нужен
+            return send(res, 200, { chats: listChats() });
+          }
+          const id = String(body.id ?? '');
+          if (!CHAT_ID.test(id)) return send(res, 400, { error: 'Неизвестный чат' });
+          if (url.pathname === '/api/chats/open') {
+            if (id !== chatId) {
+              if (id !== 'main' && !fs.existsSync(chatFiles(id).events)) return send(res, 404, { error: 'Чат не найден' });
+              openChat(id);
+            }
+            return send(res, 200, { chats: listChats() });
+          }
+          if (id === chatId) {
+            // Удаляется открытый чат: показываем самый свежий из оставшихся или новый пустой
+            const next = listChats().find((c) => c.id !== id);
+            openChat(next ? next.id : newChatId());
+          }
+          for (const f of Object.values(chatFiles(id))) fs.rmSync(f, { force: true });
+          return send(res, 200, { chats: listChats() });
+        }
         case '/api/answer':
           return send(res, hub.answer(String(body.id), body.value) ? 200 : 404, { ok: true });
         case '/api/abort':
@@ -377,7 +573,7 @@ export async function startWeb({ cfg, mode, port = 0, host = '127.0.0.1', token,
           hub.cancelAsks('no');
           return send(res, 200, { ok: true });
         case '/api/set':
-          if (MODES.includes(body.mode)) session.mode = body.mode;
+          if (MODES.includes(body.mode)) { session.mode = body.mode; primeSoon(); }
           if (TARGETS.includes(body.target)) session.target = body.target;
           if (typeof body.autoApprove === 'boolean') cfg.autoApprove = body.autoApprove;
           pushState();
@@ -386,6 +582,7 @@ export async function startWeb({ cfg, mode, port = 0, host = '127.0.0.1', token,
           if (running) return send(res, 409, { error: 'Настройки нельзя менять, пока выполняется задача.' });
           const restart = applySettings(body);
           pushState();
+          if (!restart) warmUp();
           send(res, 200, { ...settingsView(), restart });
           if (restart) setTimeout(() => shutdown('restart'), 200);
           return undefined;
@@ -416,8 +613,11 @@ export async function startWeb({ cfg, mode, port = 0, host = '127.0.0.1', token,
               const health = await checkLocalServer(cfg.local, cfg.model);
               if (!health.ok) return send(res, 200, { ok: false, error: health.problem });
             }
-            // Локальной модели нужно время, чтобы загрузиться в память при первом обращении
-            await client.complete({ model: cfg.model, system: 'Ответь одним словом.', prompt: 'ping', maxTokens: 256, signal: AbortSignal.timeout(cfg.provider === 'local' ? 10 * 60 * 1000 : 60000) });
+            // Локальной модели нужно время, чтобы загрузиться в память при первом обращении.
+            // У Ollama достаточно самой загрузки: пробный ответ думающей модели занял бы лишние минуты.
+            const loaded = cfg.provider === 'local' && await client.local.warm(cfg.model, AbortSignal.timeout(15 * 60 * 1000));
+            if (!loaded) await client.complete({ model: cfg.model, system: 'Ответь одним словом.', prompt: 'ping', maxTokens: 256, signal: AbortSignal.timeout(cfg.provider === 'local' ? 10 * 60 * 1000 : 60000) });
+            if (loaded) { modelState = { status: 'ready', note: '' }; pushState(); primeSoon(); }
             if (cfg.provider === 'local') {
               // Сразу предупреждаем, если модель не помещается в видеопамять: иначе это выглядит как зависание
               const slow = await ollamaLoadWarning(cfg.local, cfg.model);
@@ -449,6 +649,7 @@ export async function startWeb({ cfg, mode, port = 0, host = '127.0.0.1', token,
 
   for (const n of notices) hub.emit({ t: 'msg', level: 'warn', text: n });
   if (autoStop) scheduleStop(autoStop.startMs);
+  warmUp(); // модель загружается в память, пока пользователь ещё только смотрит на окно
 
   return {
     url: urls[0], urls, port: actualPort, token: secret, hub, session, closed,

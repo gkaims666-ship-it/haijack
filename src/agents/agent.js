@@ -2,6 +2,7 @@
 
 import { buildSystemPrompt, AGENT_META } from './prompts.js';
 import { getTools, toApiTools, executeTool } from '../tools/index.js';
+import { readInstructions } from '../config.js';
 
 const CONTEXT_SOFT_LIMIT = 500_000; // символов истории, после которых старые выводы инструментов сжимаются
 
@@ -33,7 +34,7 @@ export class Agent {
 
   #buildSystem() {
     const memory = this.cfg.memory && this.memory ? this.memory.read() : '';
-    return buildSystemPrompt(this.role, this.cfg.cwd, memory, { compact: this.cfg.provider === 'local' });
+    return buildSystemPrompt(this.role, this.cfg.cwd, memory, { compact: this.cfg.provider === 'local', custom: readInstructions() });
   }
 
   /** Обновить системный промт (после изменения памяти), не теряя историю диалога */
@@ -49,6 +50,37 @@ export class Agent {
     this.messages = [];
     this.seen.clear();
     this.system = this.#buildSystem();
+  }
+
+  /**
+   * Прогрев: сервер локальной модели заранее читает инструкции, описания инструментов и историю диалога.
+   * Следующий настоящий запрос начинается с тех же слов, и модель отвечает сразу, а не после чтения.
+   * Ответ не нужен — запрос просит один токен. Ошибки и прерывание не важны.
+   */
+  async prime(signal, { fresh = false } = {}) {
+    if (this.cfg.provider !== 'local' || !this.model) return;
+    // fresh — агент начнёт следующую задачу с чистой истории (так работают агенты конвейера)
+    const history = fresh ? [] : this.messages;
+    const last = history[history.length - 1];
+    const messages = last?.role === 'user' ? history : [...history, { role: 'user', content: '…' }];
+    try {
+      await this.client.stream({ model: this.model, system: this.system, messages, tools: this.apiTools, maxTokens: 1, signal, prime: true }, {});
+    } catch { /* прогрев — удобство: настоящий запрос сам сообщит об ошибке */ }
+  }
+
+  /**
+   * Убирает последний обмен: реплику пользователя и всё, что за ней последовало.
+   * @returns {string|null} текст убранной реплики
+   */
+  rewind() {
+    for (let i = this.messages.length - 1; i >= 0; i--) {
+      const m = this.messages[i];
+      if (m.role === 'user' && typeof m.content === 'string') {
+        this.messages.length = i;
+        return m.content;
+      }
+    }
+    return null;
   }
 
   /**
@@ -125,6 +157,9 @@ export class Agent {
       this.#compact();
       this.ui.agentThinking(this.meta);
       let msg;
+      const startedAt = Date.now();
+      let firstAt = 0;
+      const first = () => { if (!firstAt) firstAt = Date.now(); };
       try {
         msg = await this.client.stream(
           {
@@ -136,8 +171,9 @@ export class Agent {
             signal,
           },
           {
-            onText: (d) => this.ui.agentText(this.meta, d),
-            onToolUseStart: () => this.ui.stopSpinner(),
+            onText: (d) => { first(); this.ui.agentText(this.meta, d); },
+            onThinking: (d) => { first(); this.ui.agentThought?.(this.meta, d); },
+            onToolUseStart: () => { first(); this.ui.stopSpinner(); },
             onRetry: (i) => this.ui.retry(i),
             onNotice: (t) => this.ui.warn(t),
           },
@@ -147,6 +183,15 @@ export class Agent {
       }
       this.usage.add(this.model, msg.usage);
       this.ui.agentTextEnd();
+      // Сколько модель читала запрос и с какой скоростью писала ответ — видно под репликой
+      const endedAt = Date.now();
+      const out = msg.usage?.output_tokens || 0;
+      const writeMs = endedAt - (firstAt || endedAt);
+      this.ui.agentStats?.(this.meta, {
+        model: this.model, input: msg.usage?.input_tokens || 0, output: out,
+        firstMs: (firstAt || endedAt) - startedAt, totalMs: endedAt - startedAt,
+        speed: out > 1 && writeMs > 200 ? Math.round((out / writeMs) * 10000) / 10 : 0,
+      });
 
       // Пустые текстовые блоки API обратно не принимает
       msg.content = msg.content.filter((b) => b.type !== 'text' || b.text);
