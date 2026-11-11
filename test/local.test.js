@@ -303,7 +303,7 @@ test('настройки: LLM_PROVIDER и LOCAL_LLM_* читаются как с
     const cfg = buildConfig(os.tmpdir());
     assert.equal(cfg.provider, 'local');
     assert.equal(cfg.model, 'big');
-    assert.deepEqual(cfg.local, { baseUrl: 'http://localhost:11434/v1', apiKey: 'ollama', fallbackModel: 'tiny', numCtx: 16384, timeoutMs: 60000, firstTimeoutMs: 900000, keepAlive: '60m', temperature: 0.2, think: '' });
+    assert.deepEqual(cfg.local, { baseUrl: 'http://localhost:11434/v1', apiKey: 'ollama', fallbackModel: 'tiny', numCtx: 16384, timeoutMs: 60000, firstTimeoutMs: 900000, keepAlive: '60m', temperature: 0.2, think: 'off' });
     assert.equal(cfg.models.coder, 'big');
     assert.equal(cfg.models.executor, 'quick');
   } finally {

@@ -62,7 +62,21 @@ try {
   const after = await run(['-y', '-p', '/self status'], { cwd, env });
   if (!/Работает заводская версия/.test(after.out)) fail(`возврат к заводской версии не сработал:\n${reset.out}\n${after.out}`);
 
-  console.log(`E2E OK: ${[cmd, ...baseArgs].join(' ')} — версия ${VERSION}, самопроверка пройдена, конвейер отработал, самоулучшение установило и откатило версию, запросов к API: ${mock.requests.length}`);
+  // Режим сервера MCP: так программу подключают к Claude Code, Cursor и другим средам
+  const mcpOut = await new Promise((resolve, reject) => {
+    const child = spawn(bin, [...fixed, 'mcp'], { cwd, env, stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true });
+    let out = '';
+    const timer = setTimeout(() => { child.kill(); reject(new Error(`сервер MCP не ответил. Вывод:\n${out}`)); }, 60000);
+    child.stdout.on('data', (d) => { out += d; if (out.split('\n').filter(Boolean).length >= 2) child.stdin.end(); });
+    child.on('error', reject);
+    child.on('close', () => { clearTimeout(timer); resolve(out); });
+    child.stdin.write(`${JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'initialize', params: { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 'e2e', version: '1' } } })}\n`);
+    child.stdin.write(`${JSON.stringify({ jsonrpc: '2.0', id: 2, method: 'tools/list', params: {} })}\n`);
+  });
+  const mcpLines = mcpOut.split('\n').filter(Boolean).map((l) => { try { return JSON.parse(l); } catch { return fail(`сервер MCP написал в stdout постороннее: ${l}`); } });
+  if (mcpLines[0]?.result?.serverInfo?.name !== 'haijack' || !mcpLines[1]?.result?.tools?.some((t) => t.name === 'haijack_run')) fail(`сервер MCP ответил неверно:\n${mcpOut}`);
+
+  console.log(`E2E OK: ${[cmd, ...baseArgs].join(' ')} — версия ${VERSION}, самопроверка пройдена, конвейер отработал, самоулучшение установило и откатило версию, сервер MCP отвечает, запросов к API: ${mock.requests.length}`);
 } finally {
   mock.server.close();
 }

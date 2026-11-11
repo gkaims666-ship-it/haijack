@@ -3,6 +3,7 @@
 // Любое замечание Reviewer или падение у Executor возвращает задачу к Coder, после чего
 // изменённый код снова проходит ревью: непроверенные правки в итог не попадают.
 
+import { mcp } from '../mcp/client.js';
 import { Agent } from './agent.js';
 import { TOOLSETS } from '../tools/index.js';
 import { ChangeSet } from '../tools/changes.js';
@@ -104,6 +105,7 @@ export class Orchestrator {
   /** Сменить рабочую папку: агенты пересобирают системный промт под новый проект */
   setCwd(cwd) {
     this.cfg.cwd = cwd;
+    mcp.start(cwd).catch(() => {}); // у другого проекта могут быть свои серверы инструментов
     this.changes = new ChangeSet(cwd);
     for (const a of Object.values(this.agents)) { a.changes = this.changes; a.reset(); }
     this.history = [];

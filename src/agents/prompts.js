@@ -203,16 +203,29 @@ For changes: read the code, make the change, check it by running tests or a shor
 `.trim(),
 };
 
-/** Инструкции проекта: LCC.md / CLAUDE.md / AGENTS.md в корне (как в Claude Code). */
+// Файлы правил, которые понимают разные среды: свой LCC.md, Claude Code, общий AGENTS.md (Codex, Cursor и другие),
+// Cursor, GitHub Copilot, Windsurf, Gemini CLI. Проект, настроенный под любую из них, работает и здесь.
+const INSTRUCTION_FILES = ['LCC.md', 'CLAUDE.md', 'AGENTS.md', '.cursorrules', '.github/copilot-instructions.md', '.windsurfrules', 'GEMINI.md'];
+
+/** Инструкции проекта: все найденные файлы правил в корне, без повторов. */
 export function loadProjectInstructions(cwd) {
-  for (const name of ['LCC.md', 'CLAUDE.md', 'AGENTS.md']) {
-    const f = path.join(cwd, name);
+  const found = [];
+  const seen = new Set();
+  const add = (name) => {
     try {
-      const text = fs.readFileSync(f, 'utf8').trim();
-      if (text) return { name, text: text.slice(0, 20000) };
+      const text = fs.readFileSync(path.join(cwd, name), 'utf8').replace(/^---\n[\s\S]*?\n---\n/, '').trim(); // служебный заголовок правил Cursor не нужен
+      if (!text || seen.has(text)) return;
+      seen.add(text);
+      found.push({ name, text });
     } catch { /* нет файла */ }
-  }
-  return null;
+  };
+  for (const name of INSTRUCTION_FILES) add(name);
+  try {
+    for (const f of fs.readdirSync(path.join(cwd, '.cursor', 'rules')).sort().slice(0, 20)) if (/\.(mdc|md)$/.test(f)) add(`.cursor/rules/${f}`);
+  } catch { /* папки правил Cursor нет */ }
+  if (!found.length) return null;
+  if (found.length === 1) return { name: found[0].name, text: found[0].text.slice(0, 20000) };
+  return { name: found.map((f) => f.name).join(', '), text: found.map((f) => `## ${f.name}\n${f.text}`).join('\n\n').slice(0, 20000) };
 }
 
 /**
