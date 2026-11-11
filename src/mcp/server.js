@@ -47,15 +47,20 @@ const TOOLS = [
 ];
 
 /** Интерфейс без экрана: копит то, что агенты сказали и сделали, для итогового отчёта */
-function collector(cfg) {
+function collector(cfg, hooks = {}) {
   const ui = {
     cfg, canAsk: false, lines: [], text: '', last: '',
-    stage: (label, desc) => { ui.flush(); ui.lines.push(`\n## ${label}${desc ? ` — ${desc}` : ''}`); },
+    stage: (label, desc) => { ui.flush(); ui.lines.push(`\n## ${label}${desc ? ` — ${desc}` : ''}`); hooks.onNote?.(`\n\n**${label}**${desc ? ` — ${desc}` : ''}\n\n`); },
     agentThinking() {}, stopSpinner() {}, agentThought() {}, agentStats() {},
-    agentText: (_meta, delta) => { ui.text += delta; },
+    agentText: (_meta, delta) => { ui.text += delta; hooks.onText?.(delta); },
     agentTextEnd: () => ui.flush(),
     flush: () => { if (ui.text.trim()) { ui.last = ui.text.trim(); ui.lines.push(ui.last); } ui.text = ''; },
-    toolCall: (_meta, block) => { ui.flush(); ui.lines.push(`- ${block.name}(${String(block.input?.path ?? block.input?.command ?? block.input?.pattern ?? '').slice(0, 120)})`); },
+    toolCall: (_meta, block) => {
+      ui.flush();
+      const line = `- ${block.name}(${String(block.input?.path ?? block.input?.command ?? block.input?.pattern ?? '').slice(0, 120)})`;
+      ui.lines.push(line);
+      hooks.onNote?.(`\n${line}\n`);
+    },
     toolResult() {}, commandOutput() {}, commandDone() {}, shellOutput() {},
     // Вызов инструмента уже одобрен в среде, которая его сделала; опасные команды без человека не выполняются
     approve: async ({ dangerous }) => !dangerous,
@@ -69,7 +74,11 @@ function collector(cfg) {
   return ui;
 }
 
-async function runTool(name, args, signal) {
+/**
+ * Выполняет задачу (haijack_run) или отвечает на вопрос (haijack_ask) без экрана.
+ * hooks.onText / hooks.onNote получают текст агентов и служебные строки по ходу работы.
+ */
+export async function runTool(name, args, signal, hooks = {}) {
   const text = String(name === 'haijack_ask' ? args.question ?? '' : args.task ?? '').trim();
   if (!text) throw new Error(name === 'haijack_ask' ? 'Нужен вопрос (question)' : 'Нужна задача (task)');
   const cwd = path.resolve(args.cwd || process.cwd());
@@ -79,7 +88,7 @@ async function runTool(name, args, signal) {
   if (!hasCredentials(cfg)) throw new Error('В haijack не настроен доступ к модели. Запустите приложение haijack один раз и выберите модель или введите ключ API.');
   cfg.autoApprove = true;
   await mcp.start(cwd);
-  const ui = collector(cfg);
+  const ui = collector(cfg, hooks);
   const usage = new Usage();
   const memory = new Memory();
   const orchestrator = new Orchestrator({ client: new ModelClient(cfg), cfg, ui, usage, memory });
