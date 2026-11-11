@@ -183,7 +183,7 @@ test('непрерывная задача: итерации идут до ост
   assert.match(log, /\n1\. .* выполнено — a\.txt/);
   assert.match(log, /\n2\. .* выполнено — /);
   assert.match(log, /\n3\. прервано пользователем/);
-  assert.ok(ui.log.some((l) => /print:Итоги непрерывной задачи \(2\)/.test(l)));
+  assert.ok(ui.log.some((l) => /print:Итоги непрерывной задачи \(итераций: 2\)/.test(l)));
 });
 
 test('непрерывная задача останавливается сама после трёх неудач подряд', async () => {
@@ -191,6 +191,22 @@ test('непрерывная задача останавливается сам�
   await session.handle('/loop делай');
   assert.ok(ui.log.some((l) => /warn:Непрерывная задача остановлена: 3 итерации подряд не удались/.test(l)));
   assert.equal(ui.log.filter((l) => l === 'error:API 529: overloaded').length, 3);
+});
+
+test('непрерывная задача останавливается сама, когда три итерации подряд ничего не изменили', async () => {
+  let plans = 0;
+  const { session, ui } = setup((role, n, req) => {
+    if (role === 'architect') { plans++; return PLAN; }
+    // Первая итерация меняет файл, дальше менять нечего
+    if (role === 'coder') return plans === 1 ? coderWrites('a.txt', () => 'готово\n')(n, req) : 'Улучшать больше нечего.';
+    if (role === 'reviewer') return 'ВЕРДИКТ: OK';
+    return 'СТАТУС: PASS';
+  });
+  await session.handle('/loop улучшай a.txt');
+  assert.equal(plans, 4, 'одна итерация с изменением и три холостых');
+  assert.ok(ui.log.some((l) => /done:Непрерывная задача остановлена: 3 итерации подряд ничего не изменили/.test(l)), ui.log.join('\n'));
+  assert.ok(ui.log.some((l) => /print:Итоги непрерывной задачи \(итераций: 4\)/.test(l)));
+  assert.equal(session.looping, false);
 });
 
 test('задача про само приложение: программа предлагает режим «приложение», отказ запоминает', async () => {
