@@ -88,7 +88,7 @@ export function looksLikeSelfTask(text) {
 
 const isAnswerOnly = (plan) => /РЕЖИМ:\s*ОТВЕТ/i.test(plan) && !/РЕЖИМ:\s*ИЗМЕНЕНИЯ/i.test(plan);
 const MAX_LOOP_FAILURES = 3; // подряд неудачных итераций непрерывной задачи до остановки
-const MAX_LOOP_IDLE = 3;     // столько итераций подряд без единого изменения — и непрерывная задача считается выполненной
+const MAX_LOOP_IDLE = 3;     // после стольких итераций подряд без изменений модель получает указание искать глубже
 
 export class Session {
   /**
@@ -249,21 +249,34 @@ export class Session {
     log(`# Непрерывная задача\n\n${task}\n\nЦель: ${this.target === 'self' ? 'само приложение' : this.cfg.cwd}\nНачало: ${new Date().toISOString()}\n`);
     ui.info(`Непрерывная задача запущена. Она будет выполняться, пока вы её не остановите. Журнал: ${logFile}`);
 
-    const done = [];
-    let failures = 0;
-    let idle = 0; // итерации подряд, которые завершились, но ничего не изменили
+    // Цикл бесконечный: останавливает его только пользователь. Сбои и «холостые» итерации его не прерывают.
+    const done = [];   // последние итерации (для подсказки модели и итогов); полный список — в журнале
+    let total = 0;
+    let failures = 0;  // неудачи подряд: от них зависит пауза перед следующей попыткой
+    let idle = 0;      // итерации подряд, которые завершились, но ничего не изменили
     let n = 0;
+    const pauseBase = Number(process.env.LCC_LOOP_PAUSE_MS) || 5000;
+    const pause = (ms) => new Promise((resolve) => {
+      const timer = setTimeout(finish, ms);
+      function finish() { clearTimeout(timer); signal.removeEventListener('abort', finish); resolve(); }
+      signal.addEventListener('abort', finish, { once: true });
+    });
     try {
       while (!signal.aborted) {
         n++;
         ui.info(`Итерация ${n}`);
-        const prompt = [
-          task,
-          `# Непрерывная задача, итерация ${n}`,
-          done.length
-            ? `Уже сделано в прошлых итерациях:\n${done.slice(-15).map((d, i) => `${i + 1}. ${d}`).join('\n')}\n\nВыбери и выполни следующее по важности улучшение в рамках задачи. Не повторяй сделанное. Если улучшать больше нечего, проверь сделанное ранее и исправь найденные недочёты.`
-            : 'Задача выполняется итерациями. В этой итерации сделай одно законченное улучшение в рамках задачи и доведи его до рабочего состояния.',
-        ].join('\n\n');
+        let direction = 'Задача выполняется итерациями. В этой итерации сделай одно законченное улучшение в рамках задачи и доведи его до рабочего состояния.';
+        if (done.length) {
+          direction = `Уже сделано в прошлых итерациях:\n${done.slice(-15).map((d, i) => `${i + 1}. ${d}`).join('\n')}\n\n`
+            + 'Выбери и выполни следующее по важности улучшение в рамках задачи. Не повторяй сделанное. Если улучшать больше нечего, проверь сделанное ранее и исправь найденные недочёты.';
+        }
+        if (idle >= MAX_LOOP_IDLE) {
+          // Очевидное сделано, а цикл продолжается: модель получает указание искать глубже
+          direction += '\n\nПоследние итерации ничего не изменили. Не отвечай, что улучшать нечего: возьми направление, которого ещё не было, — '
+            + 'непроверенные крайние случаи и обработка ошибок, недостающие тесты, производительность, читаемость кода, документация, удобство использования. '
+            + 'Найди конкретный недочёт в коде и исправь его.';
+        }
+        const prompt = [task, `# Непрерывная задача, итерация ${n}`, direction].join('\n\n');
         let line;
         try {
           const res = await this.#dispatch(prompt, signal);
@@ -278,24 +291,25 @@ export class Session {
           ui.error(err.message);
           failures++;
         }
+        total++;
         done.push(line);
+        if (done.length > 200) done.shift();
         log(`${n}. ${new Date().toISOString()} ${line}`);
-        if (idle >= MAX_LOOP_IDLE) {
-          // Работа закончилась сама: крутить модель вхолостую незачем
-          ui.done(`Непрерывная задача остановлена: ${MAX_LOOP_IDLE} итерации подряд ничего не изменили — похоже, улучшать больше нечего. Журнал: ${logFile}`);
-          break;
-        }
-        if (failures >= MAX_LOOP_FAILURES) {
-          ui.warn(`Непрерывная задача остановлена: ${MAX_LOOP_FAILURES} итерации подряд не удались. Журнал: ${logFile}`);
-          break;
+        if (failures >= MAX_LOOP_FAILURES && !signal.aborted) {
+          // Несколько неудач подряд (сервер модели недоступен, нет сети): цикл не останавливается,
+          // а ждёт всё дольше — до пяти минут — и пробует снова
+          const wait = Math.min(pauseBase * 3 ** (failures - MAX_LOOP_FAILURES), 5 * 60 * 1000);
+          ui.warn(`Неудач подряд: ${failures}. Пауза ${wait >= 60000 ? `${Math.round(wait / 60000)} мин` : `${Math.max(1, Math.round(wait / 1000))} с`}, затем следующая попытка. Остановить — кнопка «Стоп» или Esc.`);
+          log(`   пауза ${wait} мс после ${failures} неудач подряд`);
+          await pause(wait);
         }
       }
     } finally {
-      log(`\nОкончание: ${new Date().toISOString()}, итераций: ${done.length}`);
+      log(`\nОкончание: ${new Date().toISOString()}, итераций: ${total}`);
       if (done.length) {
         // В чат — последние итерации; полный список остаётся в журнале
-        const shown = done.map((d, i) => `${i + 1}. ${d}`).slice(-30);
-        ui.print(`Итоги непрерывной задачи (итераций: ${done.length}${done.length > shown.length ? `, показаны последние ${shown.length}` : ''}):\n${shown.join('\n')}\n\nЖурнал: ${logFile}`);
+        const shown = done.map((d, i) => `${total - done.length + i + 1}. ${d}`).slice(-30);
+        ui.print(`Итоги непрерывной задачи (итераций: ${total}${total > shown.length ? `, показаны последние ${shown.length}` : ''}):\n${shown.join('\n')}\n\nЖурнал: ${logFile}`);
       }
     }
   }
