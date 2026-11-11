@@ -177,3 +177,55 @@ test('веб: тело запроса не объект — понятный о�
     assert.deepEqual(await post('/api/model', '[1]'), [400, 'Некорректное имя модели']);
   } finally { web.close(); await web.closed; }
 });
+
+test('ответ без артефактов: служебные метки, вызов текстом и незакрытые размышления не доходят до экрана', async () => {
+  const { OpenAIClient } = await import('../src/api/openai.js');
+  const http = await import('node:http');
+  let reply = '';
+  const server = http.createServer((req, res) => {
+    if (req.url === '/api/version') { res.writeHead(404); return res.end(); }
+    req.resume();
+    req.on('end', () => {
+      res.writeHead(200, { 'content-type': 'text/event-stream' });
+      // Текст приходит мелкими кусками, как в настоящем потоке
+      for (let i = 0; i < reply.length; i += 7) res.write(`data: ${JSON.stringify({ choices: [{ delta: { content: reply.slice(i, i + 7) } }] })}\n\n`);
+      res.end(`data: ${JSON.stringify({ choices: [{ delta: {}, finish_reason: 'stop' }] })}\n\ndata: [DONE]\n\n`);
+    });
+  });
+  await new Promise((r) => server.listen(0, '127.0.0.1', r));
+  const client = new OpenAIClient({ local: { baseUrl: `http://127.0.0.1:${server.address().port}/v1`, timeoutMs: 5000, firstTimeoutMs: 5000 } });
+  const ask = async (text, tools = []) => {
+    reply = text;
+    let shown = '';
+    let rewritten = null;
+    const msg = await client.stream({ model: 'm', system: 's', messages: [{ role: 'user', content: 'q' }], tools, maxTokens: 100 },
+      { onText: (d) => { shown += d; }, onRewrite: (t) => { rewritten = t; } });
+    return { msg, screen: rewritten ?? shown };
+  };
+  const readTool = [{ name: 'read_file', description: 'd', input_schema: { type: 'object', properties: { path: { type: 'string' } } } }];
+  try {
+    // Метки шаблона чата
+    let r = await ask('Готово, файл создан.<|im_end|>\n<|im_start|>assistant\n');
+    assert.equal(r.screen, 'Готово, файл создан.');
+    assert.deepEqual(r.msg.content, [{ type: 'text', text: 'Готово, файл создан.' }]);
+    r = await ask('Ответ: 42<|eot_id|>');
+    assert.equal(r.screen, 'Ответ: 42');
+    // Размышления закрыты без открывающего тега
+    r = await ask('Так, надо подумать про кэш…\n</think>\n\nИспользуйте Redis.');
+    assert.equal(r.screen, 'Используйте Redis.');
+    // Вызов инструмента одним объектом JSON и в блоке кода
+    r = await ask('{"name": "read_file", "arguments": {"path": "a.js"}}', readTool);
+    assert.equal(r.screen, '');
+    assert.deepEqual(r.msg.content.map((b) => [b.type, b.name]), [['tool_use', 'read_file']]);
+    r = await ask('Сначала посмотрю файл.\n```json\n{"name": "read_file", "arguments": {"path": "a.js"}}\n```', readTool);
+    assert.equal(r.screen, 'Сначала посмотрю файл.');
+    // Другое обозначение вызова скрывается ещё по ходу
+    r = await ask('Читаю.<|tool_call|>{"name": "read_file", "arguments": {"path": "a.js"}}', readTool);
+    assert.equal(r.screen, 'Читаю.');
+    assert.equal(r.msg.stop_reason, 'tool_use');
+    // Обычный ответ не трогается: угловые скобки и код остаются как есть
+    const plain = 'Сравнение `a < b` и тег <div> — это нормально.\n```js\nif (a<b) {}\n```';
+    r = await ask(plain);
+    assert.equal(r.screen, plain);
+  } finally { server.close(); }
+});
