@@ -162,6 +162,9 @@ export class Agent {
     };
 
     let finalText = '';
+    // Защита от зацикливания: слабые модели иногда повторяют один и тот же вызов снова и снова
+    let lastCall = '';
+    let repeats = 0;
     for (let turn = 0; turn < this.cfg.maxTurns; turn++) {
       this.#compact();
       this.ui.agentThinking(this.meta);
@@ -225,6 +228,17 @@ export class Agent {
       for (const block of toolUses) {
         if (signal?.aborted) break;
         this.ui.toolCall(this.meta, block);
+        const call = `${block.name}:${JSON.stringify(block.input)}`;
+        repeats = call === lastCall ? repeats + 1 : 0;
+        lastCall = call;
+        if (repeats >= 2) {
+          // Третий одинаковый вызов подряд не выполняется: результат был бы тем же
+          const text = 'Ты уже несколько раз подряд сделал этот вызов с теми же аргументами — результат не изменится. '
+            + 'Используй результат, полученный выше: сделай следующий шаг другим способом или заверши ответ.';
+          this.ui.toolResult(block, { content: 'повтор того же вызова — пропущен', isError: true });
+          results.push({ type: 'tool_result', tool_use_id: block.id, content: text, is_error: true });
+          continue;
+        }
         const res = await executeTool(block, this.tools, ctx);
         this.ui.toolResult(block, res);
         let content = res.content;
@@ -239,6 +253,10 @@ export class Agent {
         results.push({ type: 'tool_result', tool_use_id: block.id, content: 'Прервано пользователем', is_error: true });
       }
       this.messages.push({ role: 'user', content: results });
+      if (repeats >= 5) {
+        this.ui.warn(`${this.meta.label}: модель зациклилась на одном действии (${lastCall.split(':')[0]}), шаг остановлен.`);
+        return finalText || '(агент остановлен: модель повторяла одно и то же действие)';
+      }
       if (signal?.aborted) {
         const e = new Error('Прервано пользователем');
         e.name = 'AbortError';

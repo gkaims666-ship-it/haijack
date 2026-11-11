@@ -370,7 +370,7 @@ test('локальная модель: история и результаты и
   const client = new FakeClient((role, n, req) => {
     sizes.push(JSON.stringify(req.messages).length);
     if (n === 2) firstResult = req.messages[2].content[0].content; // позже старые результаты сокращаются
-    return n <= 12 ? [tool(`t${n}`, 'read_file', { path: 'big.txt' })] : 'готово';
+    return n <= 12 ? [tool(`t${n}`, 'read_file', { path: 'big.txt', limit: 2000 + n })] : 'готово';
   });
   const agent = new Agent({ role: 'solo', toolNames: ['read_file'], client, cfg, ui: silentUi(), usage: new Usage() });
   assert.equal(await agent.send('прочитай файл много раз', {}), 'готово');
