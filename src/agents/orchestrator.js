@@ -3,6 +3,7 @@
 // Любое замечание Reviewer или падение у Executor возвращает задачу к Coder, после чего
 // изменённый код снова проходит ревью: непроверенные правки в итог не попадают.
 
+import { writeFileAtomic } from '../tools/fsutil.js';
 import { mcp } from '../mcp/client.js';
 import { Agent } from './agent.js';
 import { TOOLSETS } from '../tools/index.js';
@@ -88,7 +89,7 @@ export class Orchestrator {
         messages = messages.slice(next);
       }
       fs.mkdirSync(path.dirname(this.dialogFile), { recursive: true });
-      fs.writeFileSync(this.dialogFile, JSON.stringify({ cwd: this.cfg.cwd, messages }));
+      writeFileAtomic(this.dialogFile, JSON.stringify({ cwd: this.cfg.cwd, messages }));
     } catch { /* сохранение диалога — удобство, а не необходимость */ }
   }
 
