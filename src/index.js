@@ -26,6 +26,7 @@ haijack v${VERSION} — терминальный ИИ-ассистент с 4 а
   lcc --app                 окно приложения с интерфейсом
   lcc --web                 интерфейс в браузере (http://127.0.0.1:<порт>)
   lcc --cwd <папка>         рабочая папка проекта
+  lcc serve [--port N]      OpenAI-совместимый адрес: haijack как «модель» для других программ
   lcc mcp                   работать сервером MCP: так haijack подключают к Claude Code, Cursor и другим средам
 
 Опции:
@@ -116,6 +117,29 @@ export async function main(argv = process.argv.slice(2), boot = {}) {
     const { serveMcp } = await import('./mcp/server.js');
     bootOk();
     return serveMcp();
+  }
+  if (args.rest[0] === 'serve') {
+    const serveCwd = path.resolve(args.cwd || process.cwd());
+    loadEnv(serveCwd);
+    const { startApiServer } = await import('./api-server.js');
+    let api;
+    try {
+      api = await startApiServer({ port: args.port ?? (Number(process.env.LCC_API_PORT) || 8765), host: process.env.LCC_API_HOST || '127.0.0.1', cwd: serveCwd });
+    } catch (err) {
+      console.error(err.code === 'EADDRINUSE' ? 'Порт занят. Укажите другой: haijack serve --port 8766' : err.message);
+      return 1;
+    }
+    bootOk();
+    console.log(`haijack v${VERSION} — OpenAI-совместимый адрес запущен.`);
+    console.log(`  Адрес (base URL): http://127.0.0.1:${api.port}/v1`);
+    console.log(`  Ключ (API key):   ${api.key}`);
+    console.log('  Модели: haijack — выполняет задачу в папке проекта; haijack-ask — отвечает на вопросы, ничего не меняя.');
+    console.log(`  Папка проекта: ${serveCwd}`);
+    console.log('Ctrl+C — остановить.');
+    process.once('SIGINT', () => api.close());
+    process.once('SIGTERM', () => api.close());
+    await api.closed;
+    return 0;
   }
   if (args.selfCheck) {
     // Диагностика: та же самопроверка, что выполняется перед установкой доработанной версии

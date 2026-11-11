@@ -225,6 +225,8 @@ footer { flex: none; padding-top: 6px; padding-bottom: max(12px, env(safe-area-i
 .tools-row { display: flex; align-items: center; gap: 4px; }
 .chips { display: flex; align-items: center; gap: 2px; flex: 1; min-width: 0; overflow-x: auto; scrollbar-width: none; padding: 1px; }
 .chips::-webkit-scrollbar { display: none; }
+/* Переключатели, не поместившиеся в строку, плавно уходят за край и прокручиваются пальцем */
+@media (max-width: 720px) { .chips { -webkit-mask-image: linear-gradient(90deg, #000 calc(100% - 28px), transparent); mask-image: linear-gradient(90deg, #000 calc(100% - 28px), transparent); padding-right: 22px; } }
 /* Переключатели без рамок: в покое это просто слова, включённый подсвечен цветом */
 .chip { display: inline-flex; align-items: center; gap: 6px; min-height: 34px; padding: 0 11px; flex: none; border-radius: 10px; color: var(--faint); font-size: 13px; white-space: nowrap; transition: background .14s, color .14s; }
 .chip:hover { color: var(--text); background: var(--raised); }
@@ -1227,7 +1229,7 @@ textarea.input { padding: 10px 14px; min-height: 96px; resize: vertical; line-he
     ['/help', 'все команды'], ['/diff', 'показать изменения последней задачи'], ['/undo', 'откатить изменения последней задачи'],
     ['/retry', 'выполнить последнюю задачу заново'], ['/clear', 'очистить диалог, сохранив опыт в память'],
     ['/memory', 'что программа помнит'], ['/journal', 'последние задачи и их результаты'], ['/status', 'среда и настройки'],
-    ['/cost', 'расход токенов за сессию'], ['/cd ', 'сменить папку проекта'], ['/loop ', 'повторять задачу до остановки'],
+    ['/cost', 'расход токенов за сессию'], ['/cd ', 'сменить папку проекта'], ['/open', 'открыть проект в Cursor или VS Code'], ['/mcp', 'подключённые серверы инструментов'], ['/loop ', 'повторять задачу до остановки'],
     ['/self ', 'улучшить само приложение'], ['/pull ', 'скачать модель на сервер Ollama'], ['/mode ', 'режим: auto, plan или solo'],
     ['/yes', 'не спрашивать перед записью файлов и командами']
   ];
@@ -1715,6 +1717,22 @@ textarea.input { padding: 10px 14px; min-height: 96px; resize: vertical; line-he
       open.appendChild(el('small', '', c.updated ? new Date(c.updated).toLocaleString('ru', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }) : 'пока пусто'));
       open.onclick = function () { if (c.current) closeSheet(); else chatAction('/api/chats/open', { id: c.id }); };
       row.appendChild(open);
+      row.appendChild(mini('Имя', function () {
+        // Название правится прямо в строке: Enter — сохранить, Esc — отменить
+        var field = el('input', 'input'); field.value = c.title; field.style.minHeight = '38px';
+        row.textContent = ''; row.appendChild(field); field.focus(); field.select();
+        var finished = false;
+        function finish(save) {
+          if (finished) return; finished = true;
+          if (!save || field.value.trim() === c.title) { drawChats(chatsData); return; }
+          api('POST', '/api/chats/rename', { id: c.id, title: field.value }).then(drawChats, function (e) { drawChats(chatsData); note('error', e.message); });
+        }
+        field.addEventListener('keydown', function (e) {
+          if (e.key === 'Enter') { e.preventDefault(); finish(true); }
+          if (e.key === 'Escape') { e.stopPropagation(); finish(false); }
+        });
+        field.addEventListener('blur', function () { finish(true); });
+      }));
       row.appendChild(mini('Удалить', function () {
         confirmBox('Удалить чат?', '«' + c.title + '» будет удалён без возможности восстановления. Долговременная память программы сохранится.', 'Удалить', function () {
           api('POST', '/api/chats/delete', { id: c.id }).catch(function (e) { note('error', e.message); });

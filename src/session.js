@@ -1,6 +1,7 @@
 // Сессия: общая логика терминального REPL и веб-интерфейса —
 // slash-команды, запуск задач в нужном режиме, непрерывные задачи, самоулучшение, прерывание.
 
+import { spawn } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import { execCommand } from './tools/command.js';
@@ -12,6 +13,27 @@ import { formatJournal } from './memory.js';
 import { prepareStaging, activate, rollback, resetToFactory, selfStatus } from './self/improve.js';
 import { selfCheck } from './self/check.js';
 import { pullModel, MODEL_NAME } from './api/openai.js';
+import { mcp } from './mcp/client.js';
+
+// Редакторы, в которых можно открыть папку проекта: имя для /open -> команда запуска
+export const EDITORS = { cursor: 'cursor', code: 'code', vscode: 'code', windsurf: 'windsurf', zed: 'zed' };
+
+/** Открывает папку в редакторе. Возвращает промис: true — редактор запустился, false — команда не найдена. */
+export function openInEditor(command, dir) {
+  return new Promise((resolve) => {
+    let child;
+    try {
+      // На Windows команды редакторов — это .cmd-файлы: напрямую они не запускаются
+      child = spawn(command, [dir], { detached: true, stdio: 'ignore', shell: process.platform === 'win32', windowsHide: true });
+    } catch { resolve(false); return; }
+    let settled = false;
+    const finish = (ok) => { if (!settled) { settled = true; resolve(ok); } };
+    child.on('error', () => finish(false));
+    child.on('exit', (code) => finish(code === 0));
+    // Редактор, оставшийся работать, считается запущенным
+    setTimeout(() => { child.unref(); finish(true); }, 1500).unref?.();
+  });
+}
 
 export const MODES = ['auto', 'plan', 'solo'];
 export const TARGETS = ['project', 'self'];
@@ -47,6 +69,8 @@ export const HELP = `
   /model [имя]            показать или сменить модель для всех агентов
   /pull <имя>             скачать модель на сервер Ollama (например hf.co/автор/репозиторий:Q4_K_M)
   /cd <папка>             сменить папку проекта
+  /open [редактор]        открыть проект в редакторе: cursor, code, windsurf, zed
+  /mcp                    подключённые серверы инструментов (MCP)
   /cost                   расход токенов за сессию
   /status                 среда, оболочка, настройки
   /help                   эта справка
@@ -345,6 +369,24 @@ export class Session {
         // Агенты помнят изменённые версии файлов — после отката их память недостоверна
         for (const a of Object.values(this.orchestrator.agents)) a.reset();
         ui.info(`Восстановлено: ${restored.join(', ')}`);
+        break;
+      }
+      case 'mcp': {
+        const servers = mcp.status();
+        if (!servers.length) { ui.info('Серверы инструментов (MCP) не подключены. Добавить: настройки, раздел «Связи с другими средами», или файл ~/.lcc/mcp.json.'); break; }
+        ui.print(servers.map((s) => {
+          const state = s.state === 'ready' ? `работает, инструментов: ${s.tools.length}` : s.state === 'blocked' ? `ждёт разрешения в настройках (${s.source})` : s.state === 'error' ? `не запустился: ${s.error}` : 'запускается';
+          return `${s.name} — ${state}${s.state === 'ready' && s.tools.length ? `\n  ${s.tools.join(', ')}` : ''}`;
+        }).join('\n'));
+        break;
+      }
+      case 'open': {
+        const names = arg ? [arg.toLowerCase()] : ['cursor', 'code'];
+        if (arg && !EDITORS[names[0]]) { ui.warn(`Неизвестный редактор: ${arg}. Доступно: ${Object.keys(EDITORS).join(', ')}`); break; }
+        let opened = '';
+        for (const name of names) if (await openInEditor(EDITORS[name], cfg.cwd)) { opened = name; break; }
+        if (opened) ui.info(`Проект открыт в ${opened}: ${cfg.cwd}`);
+        else ui.warn(`Не удалось запустить ${names.join(' или ')}: команда не найдена. В редакторе включите установку команды в PATH (в Cursor и VS Code: «Shell Command: Install ... command in PATH»).`);
         break;
       }
       case 'cd': {
