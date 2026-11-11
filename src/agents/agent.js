@@ -105,7 +105,9 @@ export class Agent {
 
   #compact() {
     const budget = this.#budget;
-    let size = JSON.stringify(this.messages).length;
+    // Изображение занимает в контексте примерно одинаково мало независимо от размера файла
+    const measure = () => JSON.stringify(this.messages, (k, v) => (k === 'data' && typeof v === 'string' && v.length > 2000 ? 'x'.repeat(1500) : v)).length;
+    let size = measure();
     if (size < budget) return;
     // 1. Сокращаем самые старые результаты инструментов, сохраняя последние сообщения целиком
     const keep = this.cfg.provider === 'local' ? 2 : 6;
@@ -128,7 +130,7 @@ export class Agent {
         && result.content.some((b) => b.type === 'tool_result');
       if (!isStep) break;
       this.messages.splice(1, 2);
-      size = JSON.stringify(this.messages).length;
+      size = measure();
     }
   }
 
@@ -137,13 +139,15 @@ export class Agent {
    * @returns {Promise<string>} финальный текст агента
    */
   async send(text, { signal } = {}) {
+    // Изображения, приложенные пользователем к задаче: каждый агент получает их один раз, вместе с задачей
+    const images = (this.takeImages?.() || []).map((i) => ({ type: 'image', source: { type: 'base64', media_type: i.media, data: i.data } }));
     const last = this.messages[this.messages.length - 1];
     if (last?.role === 'user') {
       // Предыдущий запуск был прерван до ответа модели — объединяем, чтобы роли чередовались
       const prev = typeof last.content === 'string' ? [{ type: 'text', text: last.content }] : last.content;
-      last.content = [...prev, { type: 'text', text }];
+      last.content = [...prev, ...images, { type: 'text', text }];
     } else {
-      this.messages.push({ role: 'user', content: text });
+      this.messages.push({ role: 'user', content: images.length ? [...images, { type: 'text', text }] : text });
     }
     const ctx = {
       cwd: this.cfg.cwd,

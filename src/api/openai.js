@@ -50,7 +50,9 @@ export function toOpenAIMessages(system, messages) {
         out.push({ role: 'tool', tool_call_id: b.tool_use_id, content: (b.is_error ? 'ОШИБКА: ' : '') + blockText(b.content) });
       } else if (b.type === 'text') texts.push(b.text);
     }
-    if (texts.length) out.push({ role: 'user', content: texts.join('\n\n') });
+    // Изображения едут рядом с текстом отдельным полем; в формат конкретного сервера их переводит клиент
+    const images = m.content.filter((b) => b.type === 'image' && b.source?.data).map((b) => `data:${b.source.media_type};base64,${b.source.data}`);
+    if (texts.length || images.length) out.push({ role: 'user', content: texts.join('\n\n'), ...(images.length ? { images } : {}) });
   }
   return out;
 }
@@ -347,8 +349,10 @@ export function toTextToolMessages(messages, tools) {
       const content = m.role === 'tool' ? `Tool result:\n${m.content}` : m.content;
       const last = out[out.length - 1];
       // Несколько результатов подряд склеиваются: шаблоны моделей требуют чередования ролей
-      if (last?.role === 'user') last.content += `\n\n${content}`;
-      else out.push({ role: 'user', content });
+      if (last?.role === 'user') {
+        last.content += `\n\n${content}`;
+        if (m.images) last.images = [...(last.images || []), ...m.images];
+      } else out.push({ role: 'user', content, ...(m.images ? { images: m.images } : {}) });
     }
   }
   if (!hasSystem) out.unshift({ role: 'system', content: protocol });
@@ -376,7 +380,7 @@ export function toOllamaMessages(messages) {
       };
     }
     if (m.role === 'tool') return { role: 'tool', content: m.content, tool_name: names.get(m.tool_call_id) || '' };
-    return { role: m.role, content: m.content || '' };
+    return { role: m.role, content: m.content || '', ...(m.images ? { images: m.images } : {}) };
   });
 }
 
@@ -409,6 +413,7 @@ export class OpenAIClient {
     this.failedOver = new Set();                 // модели, с которых клиент ушёл на запасную
     this.ollama = new Map();                     // адрес сервера -> это Ollama? (у неё свой, более полный API)
     this.warned = new Set();                     // модели, о медленной работе которых уже сообщили
+    this.noVision = new Set();                   // модели, не принимающие изображения
     this.textTools = new Set();                  // модели без встроенного вызова инструментов: с ними — текстовый режим
   }
 
@@ -531,6 +536,9 @@ export class OpenAIClient {
       if (converted.length) body.tools = converted;
     }
     if (!this.off.usage) body.stream_options = { include_usage: true };
+    // Изображения — частями содержимого; модели без зрения они не отправляются
+    body.messages = body.messages.map(({ images, ...m }) => (images && !this.noVision.has(model)
+      ? { ...m, content: [{ type: 'text', text: m.content || '' }, ...images.map((url) => ({ type: 'image_url', image_url: { url } }))] } : m));
     return body;
   }
 
@@ -552,6 +560,9 @@ export class OpenAIClient {
     if (converted.length) body.tools = converted;
     // Размышления можно выключить в настройках: модель начинает отвечать сразу, но думает меньше
     if (this.local.think === 'off' && !this.off.think) body.think = false;
+    // Ollama принимает изображения списком base64 рядом с текстом; модели без зрения они не отправляются
+    body.messages = body.messages.map(({ images, ...m }) => (images && !this.noVision.has(model)
+      ? { ...m, images: images.map((url) => url.slice(url.indexOf(',') + 1)) } : m));
     return body;
   }
 
@@ -642,6 +653,12 @@ export class OpenAIClient {
           msg = typeof msg === 'string' ? msg : JSON.stringify(msg);
           if (res.status === 400 && !native && !this.off.usage && /stream_options/i.test(msg)) { this.off.usage = true; continue; }
           if (native && !this.off.think && this.local.think === 'off' && /think/i.test(msg)) { this.off.think = true; continue; }
+          const hasImages = req.messages.some((m) => Array.isArray(m.content) && m.content.some((b) => b.type === 'image'));
+          if (hasImages && !this.noVision.has(model) && res.status < 500 && /image|vision|multimodal|mmproj/i.test(msg)) {
+            this.noVision.add(model);
+            handlers.onNotice?.(`Модель ${model} не понимает изображения — отправляю только текст. Для работы с картинками выберите модель со зрением (в описании: vision).`);
+            continue;
+          }
           if (/does not support tools|tools? (is|are) not supported/i.test(msg) && !this.textTools.has(model)) {
             // У модели нет встроенного вызова инструментов — переходим на текстовый режим и повторяем запрос
             this.textTools.add(model);
