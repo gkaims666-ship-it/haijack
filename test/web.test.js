@@ -67,7 +67,7 @@ test('веб: защита доступа', async () => {
     const page = await fetch(`${base}/?t=${web.token}`);
     assert.equal(page.status, 200);
     assert.match(page.headers.get('content-security-policy'), /default-src 'none'/);
-    assert.match(await page.text(), /<title>Local Claude Code<\/title>/);
+    assert.match(await page.text(), /<title>haijack<\/title>/);
     // POST без служебного заголовка (запрос с чужого сайта) отклоняется
     assert.equal((await post(web, '/api/input', { text: 'x' }, {})).status, 403);
     // Чужой Host (DNS rebinding) отклоняется

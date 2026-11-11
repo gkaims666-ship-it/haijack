@@ -132,7 +132,7 @@ for (const [ollama, style] of [[true, 'native'], [true, 'text'], [false, 'native
       if (ollama) {
         // С Ollama клиент говорит на её собственном API: только так можно задать размер контекста
         assert.equal(route, '/api/chat');
-        assert.deepEqual(body.options, { temperature: 0.2, top_p: 0.9, num_predict: cfg.maxTokens, num_ctx: 16384 });
+        assert.deepEqual(body.options, { temperature: 0.2, top_p: 0.9, num_predict: 8192, num_ctx: 16384 });
         assert.equal(body.keep_alive, '30m');
         // Вызовы инструментов уходят обратно в формате Ollama: аргументы объектом, у результата — имя инструмента
         const withTool = mock.requests.find((r) => r.body.messages.some((m) => m.role === 'tool')).body.messages;
@@ -356,4 +356,43 @@ test('текстовый режим: преобразование истории
   assert.match(out[0].content, /^sys\n\n# Tools[\s\S]*- read_file: читает файл\n {2}arguments \(JSON schema\): \{"type":"object"/);
   assert.equal(out[2].content, 'читаю\n<tool_call>{"name":"read_file","arguments":{"path":"a.js"}}</tool_call>\n<tool_call>{"name":"grep","arguments":{"pattern":"x"}}</tool_call>');
   assert.equal(out[3].content, 'Tool result:\nкод\n\nTool result:\nсовпадений нет\n\nещё');
+});
+
+test('локальная модель: история и результаты инструментов укладываются в её контекст', async () => {
+  const { Agent } = await import('../src/agents/agent.js');
+  const { FakeClient, tool } = await import('./helpers.js');
+  const cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'lcc-ctx-'));
+  fs.writeFileSync(path.join(cwd, 'big.txt'), Array.from({ length: 1500 }, (_, i) => `строка ${i} ${'x'.repeat(40)}`).join('\n'));
+  const cfg = Object.assign(buildConfig(cwd), { provider: 'local', model: 'm', models: {}, maxTurns: 30, memory: false });
+  cfg.local = { ...cfg.local, numCtx: 8192 }; // бюджет истории: 8192 * 2.2 * 0.5 ≈ 9000 символов
+  const sizes = [];
+  let firstResult = '';
+  const client = new FakeClient((role, n, req) => {
+    sizes.push(JSON.stringify(req.messages).length);
+    if (n === 2) firstResult = req.messages[2].content[0].content; // позже старые результаты сокращаются
+    return n <= 12 ? [tool(`t${n}`, 'read_file', { path: 'big.txt' })] : 'готово';
+  });
+  const agent = new Agent({ role: 'solo', toolNames: ['read_file'], client, cfg, ui: silentUi(), usage: new Usage() });
+  assert.equal(await agent.send('прочитай файл много раз', {}), 'готово');
+
+  // Один результат не занимает контекст целиком, а модели сказано, как читать дальше
+  const first = firstResult;
+  assert.ok(first.length < 4500, `результат не обрезан: ${first.length}`);
+  assert.match(first, /вывод обрезан[\s\S]*читай файл частями/);
+  // История не растёт бесконечно, задача остаётся первой, структура вызов-результат не нарушена
+  assert.ok(Math.max(...sizes) < 16000, `история переросла контекст: ${Math.max(...sizes)}`);
+  const last = client.requests[client.requests.length - 1].req.messages;
+  assert.equal(last[0].content, 'прочитай файл много раз');
+  last.forEach((m, i) => {
+    if (m.role === 'assistant' && Array.isArray(m.content)) {
+      for (const b of m.content.filter((x) => x.type === 'tool_use')) assert.ok(last[i + 1].content.some((x) => x.tool_use_id === b.id));
+    }
+    if (i > 0) assert.notEqual(m.role, last[i - 1].role);
+  });
+
+  // У облачной модели контекст большой — результаты не режутся
+  const cloud = Object.assign(buildConfig(cwd), { provider: 'anthropic', models: {}, memory: false });
+  const cloudClient = new FakeClient((role, n) => (n === 1 ? [tool('c1', 'read_file', { path: 'big.txt' })] : 'ок'));
+  await new Agent({ role: 'solo', toolNames: ['read_file'], client: cloudClient, cfg: cloud, ui: silentUi(), usage: new Usage() }).send('читай', {});
+  assert.ok(cloudClient.requests[1].req.messages[2].content[0].content.length > 50000);
 });

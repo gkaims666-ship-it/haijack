@@ -1,11 +1,11 @@
 @echo off
-rem Local Claude Code - установка на Windows (cmd / PowerShell / Windows Terminal)
+rem haijack - установка на Windows (cmd / PowerShell / Windows Terminal)
 setlocal EnableExtensions
 chcp 65001 >nul
 cd /d "%~dp0"
 
 echo.
-echo === Local Claude Code: установка ===
+echo === haijack: установка ===
 echo.
 
 where node >nul 2>nul

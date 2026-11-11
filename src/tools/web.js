@@ -48,7 +48,7 @@ export const fetchUrl = {
     const cleanup = () => { clearTimeout(timer); ctx.signal?.removeEventListener('abort', onAbort); };
     let res;
     try {
-      res = await fetch(parsed, { signal: ac.signal, redirect: 'follow', headers: { 'user-agent': 'local-claude-code', accept: 'text/html,text/plain,application/json,*/*' } });
+      res = await fetch(parsed, { signal: ac.signal, redirect: 'follow', headers: { 'user-agent': 'haijack', accept: 'text/html,text/plain,application/json,*/*' } });
     } catch (err) {
       cleanup();
       if (ctx.signal?.aborted) { const e = new Error('Прервано пользователем'); e.name = 'AbortError'; throw e; }

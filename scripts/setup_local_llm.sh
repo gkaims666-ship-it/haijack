@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Подготовка локальной модели для Local Claude Code через Ollama (Linux, macOS, Termux).
+# Подготовка локальной модели для haijack через Ollama (Linux, macOS, Termux).
 #
 #   bash scripts/setup_local_llm.sh --model <имя модели> [--fallback <имя модели>] [--write-env]
 #
@@ -67,7 +67,7 @@ LOCAL_LLM_TIMEOUT=180000"
 LOCAL_LLM_FALLBACK_MODEL=$FALLBACK"
 
 echo
-echo "Готово. Настройки для Local Claude Code:"
+echo "Готово. Настройки для haijack:"
 echo "$ENV_LINES"
 if [ "$WRITE_ENV" = 1 ]; then
   mkdir -p "$HOME/.lcc"
