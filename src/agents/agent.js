@@ -78,9 +78,11 @@ export class Agent {
   rewind() {
     for (let i = this.messages.length - 1; i >= 0; i--) {
       const m = this.messages[i];
-      if (m.role === 'user' && typeof m.content === 'string') {
+      // Обычная реплика — строка или текст с изображениями; результаты инструментов репликой не считаются
+      const plain = typeof m.content === 'string' || (Array.isArray(m.content) && !m.content.some((b) => b.type === 'tool_result'));
+      if (m.role === 'user' && plain) {
         this.messages.length = i;
-        return m.content;
+        return typeof m.content === 'string' ? m.content : m.content.filter((b) => b.type === 'text').map((b) => b.text).join('\n');
       }
     }
     return null;

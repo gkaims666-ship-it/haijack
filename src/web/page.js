@@ -226,7 +226,7 @@ footer { flex: none; padding-top: 6px; padding-bottom: max(12px, env(safe-area-i
 .chips { display: flex; align-items: center; gap: 2px; flex: 1; min-width: 0; overflow-x: auto; scrollbar-width: none; padding: 1px; }
 .chips::-webkit-scrollbar { display: none; }
 /* Переключатели, не поместившиеся в строку, плавно уходят за край и прокручиваются пальцем */
-@media (max-width: 720px) { .chips { -webkit-mask-image: linear-gradient(90deg, #000 calc(100% - 28px), transparent); mask-image: linear-gradient(90deg, #000 calc(100% - 28px), transparent); padding-right: 22px; } }
+.chips { -webkit-mask-image: linear-gradient(90deg, #000 calc(100% - 28px), transparent); mask-image: linear-gradient(90deg, #000 calc(100% - 28px), transparent); padding-right: 22px; }
 /* Переключатели без рамок: в покое это просто слова, включённый подсвечен цветом */
 .chip { display: inline-flex; align-items: center; gap: 6px; min-height: 34px; padding: 0 11px; flex: none; border-radius: 10px; color: var(--faint); font-size: 13px; white-space: nowrap; transition: background .14s, color .14s; }
 .chip:hover { color: var(--text); background: var(--raised); }
@@ -392,6 +392,7 @@ textarea.input { padding: 10px 14px; min-height: 96px; resize: vertical; line-he
           <small>На компьютере откройте «Настройки → Доступ с телефона» и скопируйте ссылку. Телефон покажет тот же диалог, что и компьютер, а работа будет идти на компьютере.</small></label>
       </div>
 
+      <div class="note ok" id="l-status" hidden></div>
       <div class="note error" id="l-error" role="alert" hidden></div>
       <button class="btn primary" id="l-submit" type="submit">Войти</button>
     </form>
@@ -520,6 +521,7 @@ textarea.input { padding: 10px 14px; min-height: 96px; resize: vertical; line-he
 
     <h3>Приложение</h3>
     <pre class="block" id="s-about"></pre>
+    <button type="button" class="btn small" id="s-doctor" style="margin-top:12px">Проверить, всё ли готово к работе</button>
     <button type="button" class="btn small" id="s-quit" style="margin-top:12px">Завершить работу программы</button>
     <div class="note error" id="s-error" role="alert" hidden></div>
   </div>
@@ -1259,7 +1261,7 @@ textarea.input { padding: 10px 14px; min-height: 96px; resize: vertical; line-he
   var COMMANDS = [
     ['/help', 'все команды'], ['/diff', 'показать изменения последней задачи'], ['/undo', 'откатить изменения последней задачи'],
     ['/retry', 'выполнить последнюю задачу заново'], ['/clear', 'очистить диалог, сохранив опыт в память'],
-    ['/memory', 'что программа помнит'], ['/journal', 'последние задачи и их результаты'], ['/status', 'среда и настройки'],
+    ['/doctor', 'проверить, всё ли готово к работе'], ['/memory', 'что программа помнит'], ['/journal', 'последние задачи и их результаты'], ['/status', 'среда и настройки'],
     ['/cost', 'расход токенов за сессию'], ['/cd ', 'сменить папку проекта'], ['/open', 'открыть проект в Cursor или VS Code'], ['/mcp', 'подключённые серверы инструментов'], ['/loop ', 'повторять задачу до остановки'],
     ['/self ', 'улучшить само приложение'], ['/pull ', 'скачать модель на сервер Ollama'], ['/mode ', 'режим: auto, plan или solo'],
     ['/yes', 'не спрашивать перед записью файлов и командами']
@@ -1576,9 +1578,29 @@ textarea.input { padding: 10px 14px; min-height: 96px; resize: vertical; line-he
       $('l-remote').value = s.remoteUrl || '';
       $('l-foot').textContent = 'Версия ' + s.version + ', ' + s.platform + '. Настройки хранятся в ' + s.configFile;
       loginTab(s.provider === 'local' ? 'local' : 'anthropic');
+      // Если на компьютере уже работает сервер моделей с моделями, сразу предлагаем его: ключ не нужен
+      if (s.provider !== 'local') probeLocal(true).then(function (n) { if (n > 0 && !$('l-key').value && !$('login').hidden) loginTab('local'); });
     }).catch(function (e) { showError($('l-error'), e.message); });
   }
-  $('l-load').onclick = function () { loadModels($('l-local'), $('l-model'), $('l-load'), $('l-error'), settings && settings.model); };
+  // Проверка сервера моделей на экране входа: список моделей и понятная строка состояния
+  function probeLocal(silent) {
+    var url = $('l-local').value.trim() || $('l-local').placeholder;
+    return api('GET', '/api/models?url=' + encodeURIComponent(url)).then(function (r) {
+      fillModels($('l-model'), r.models, settings && settings.model, r.details);
+      var st = $('l-status');
+      st.hidden = false; st.className = 'note' + (r.models.length ? ' ok' : '');
+      st.textContent = r.models.length ? 'Сервер моделей найден, установлено моделей: ' + r.models.length + '.' : 'Сервер моделей найден, но моделей на нём пока нет — скачайте первую кнопкой ниже.';
+      showError($('l-error'), '');
+      return r.models.length;
+    }, function (e) { $('l-status').hidden = true; if (!silent) showError($('l-error'), e.message); return -1; });
+  }
+  // Сервер моделей могли запустить уже после открытия окна: список появится сам
+  setInterval(function () {
+    if ($('login').hidden || loginBusy || $('login-tabs').getAttribute('data-value') !== 'local' || $('l-model').value) return;
+    probeLocal(true);
+  }, 4000);
+  $('s-doctor').onclick = function () { closeSheet(); sendText('/doctor'); };
+  $('l-load').onclick = function () { $('l-load').disabled = true; probeLocal(false).then(function () { $('l-load').disabled = false; }); };
   $('login-form').onsubmit = function (e) {
     e.preventDefault();
     var tab = $('login-tabs').getAttribute('data-value') || 'anthropic';

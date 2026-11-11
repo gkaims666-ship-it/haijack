@@ -6,7 +6,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { execCommand } from './tools/command.js';
 import { resolvePath } from './tools/fsutil.js';
-import { platformInfo } from './platform.js';
+import { platformInfo, spawnSpec } from './platform.js';
+import { diagnose } from './doctor.js';
 import { VERSION } from './version.js';
 import { CONFIG_DIR } from './config.js';
 import { formatJournal } from './memory.js';
@@ -23,8 +24,9 @@ export function openInEditor(command, dir) {
   return new Promise((resolve) => {
     let child;
     try {
-      // На Windows команды редакторов — это .cmd-файлы: напрямую они не запускаются
-      child = spawn(command, [dir], { detached: true, stdio: 'ignore', shell: process.platform === 'win32', windowsHide: true });
+      // На Windows команды редакторов — это .cmd-файлы; путь к проекту может содержать пробелы
+      const spec = spawnSpec(command, [dir]);
+      child = spawn(spec.command, spec.args, { detached: true, stdio: 'ignore', shell: spec.shell, windowsHide: true });
     } catch { resolve(false); return; }
     let settled = false;
     const finish = (ok) => { if (!settled) { settled = true; resolve(ok); } };
@@ -72,6 +74,7 @@ export const HELP = `
   /open [редактор]        открыть проект в редакторе: cursor, code, windsurf, zed
   /mcp                    подключённые серверы инструментов (MCP)
   /cost                   расход токенов за сессию
+  /doctor                 проверить всё: модель, сервер, проект, связи — и что исправить
   /status                 среда, оболочка, настройки
   /help                   эта справка
   /exit                   выход
@@ -371,6 +374,8 @@ export class Session {
         ui.info(`Восстановлено: ${restored.join(', ')}`);
         break;
       }
+      case 'doctor': case 'check':
+        return this.#guard(async (signal) => ui.print((await diagnose(cfg, signal)).report));
       case 'mcp': {
         const servers = mcp.status();
         if (!servers.length) { ui.info('Серверы инструментов (MCP) не подключены. Добавить: настройки, раздел «Связи с другими средами», или файл ~/.lcc/mcp.json.'); break; }

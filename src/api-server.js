@@ -45,7 +45,9 @@ export async function startApiServer({ port = 8765, host = '127.0.0.1', cwd = pr
   const server = http.createServer((req, res) => {
     const url = new URL(req.url, 'http://local');
     const given = String(req.headers.authorization || '').replace(/^Bearer\s+/i, '');
-    const ok = given.length === key.length && crypto.timingSafeEqual(Buffer.from(given), Buffer.from(key));
+    const a = Buffer.from(given);
+    const b = Buffer.from(key);
+    const ok = a.length === b.length && crypto.timingSafeEqual(a, b); // сравнение по байтам: длины строк и байтов могут различаться
     if (!ok) return error(res, 401, 'Неверный ключ. Ключ показан при запуске «haijack serve».', 'authentication_error');
     if (req.method === 'GET' && url.pathname === '/v1/models') {
       return json(res, 200, { object: 'list', data: MODELS.map((id) => ({ id, object: 'model', created: 0, owned_by: 'haijack' })) });
