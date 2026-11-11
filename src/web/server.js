@@ -26,7 +26,8 @@ import { selfStatus } from '../self/improve.js';
 import { mcp, parseMcpConfig, MCP_FILE } from '../mcp/client.js';
 import { githubToken } from '../tools/github.js';
 
-const MAX_BODY = 4 * 1024 * 1024;
+const MAX_BODY = 12 * 1024 * 1024;
+const IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/webp', 'image/gif'];
 const EFFORTS = ['', 'low', 'medium', 'high'];
 
 function safeEqual(a, b) {
@@ -311,11 +312,12 @@ export async function startWeb({ cfg, mode, port = 0, host = '127.0.0.1', token,
   }
 
   // ---------- ввод ----------
-  async function handleInput(text) {
+  async function handleInput(text, images = []) {
     running = true;
     clearTimeout(primeTimer);
     primeCtl?.abort(); // настоящий запрос важнее прогрева
-    hub.emit({ t: 'user', text });
+    hub.emit(images.length ? { t: 'user', text, images: images.map((i) => i.name) } : { t: 'user', text });
+    orchestrator.setImages(images);
     pushState();
     let outcome;
     try {
@@ -331,6 +333,7 @@ export async function startWeb({ cfg, mode, port = 0, host = '127.0.0.1', token,
       ui.error(err.message);
     } finally {
       running = false;
+      orchestrator.setImages([]);
       hub.flush();
       pushState();
       primeSoon();
@@ -470,7 +473,7 @@ export async function startWeb({ cfg, mode, port = 0, host = '127.0.0.1', token,
               'cache-control': 'no-store',
               'x-content-type-options': 'nosniff',
               'referrer-policy': 'no-referrer',
-              'content-security-policy': "default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; connect-src 'self'; img-src data:; base-uri 'none'; form-action 'none'",
+              'content-security-policy': "default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; connect-src 'self'; img-src data: blob:; base-uri 'none'; form-action 'none'",
             });
             return res.end(PAGE);
           case '/events': {
@@ -539,7 +542,13 @@ export async function startWeb({ cfg, mode, port = 0, host = '127.0.0.1', token,
           const text = String(body.text ?? '').slice(0, 400000);
           if (!text.trim()) return send(res, 400, { error: 'пустой ввод' });
           if (running) return send(res, 409, { error: 'Дождитесь окончания текущей задачи или остановите её.' });
-          handleInput(text); // не ждём: результат придёт событиями
+          const images = [];
+          for (const i of Array.isArray(body.images) ? body.images.slice(0, 6) : []) {
+            if (!IMAGE_TYPES.includes(i?.media) || typeof i.data !== 'string' || !/^[A-Za-z0-9+/]+=*$/.test(i.data.slice(0, 200))) return send(res, 400, { error: 'Изображение должно быть в формате JPEG, PNG, WebP или GIF' });
+            if (i.data.length > 5 * 1024 * 1024) return send(res, 400, { error: 'Изображение слишком большое' });
+            images.push({ name: String(i.name || 'изображение').slice(0, 120), media: i.media, data: i.data });
+          }
+          handleInput(text, images); // не ждём: результат придёт событиями
           return send(res, 202, { ok: true });
         }
         case '/api/mcp/trust':
