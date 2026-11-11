@@ -130,7 +130,11 @@ export async function startWeb({ cfg, mode, port = 0, host = '127.0.0.1', token,
     } catch { /* файла нет */ }
     return '';
   }
+  // Свои названия чатов (иначе чат называется по первой реплике)
+  const titlesFile = path.join(sessionDir, 'titles.json');
+  const readTitles = () => { try { const t = JSON.parse(fs.readFileSync(titlesFile, 'utf8')); return t && typeof t === 'object' ? t : {}; } catch { return {}; } };
   function listChats() {
+    const titles = readTitles();
     if (!persist) return [];
     const ids = new Set(['main', chatId]);
     try { for (const f of fs.readdirSync(chatsDir)) { const m = /^(c[a-z0-9]{6,16})\.jsonl$/.exec(f); if (m) ids.add(m[1]); } } catch { /* чатов ещё нет */ }
@@ -139,7 +143,7 @@ export async function startWeb({ cfg, mode, port = 0, host = '127.0.0.1', token,
       const file = chatFiles(id).events;
       let updated = 0;
       try { updated = fs.statSync(file).mtimeMs; } catch { /* пустой чат без файла */ }
-      const title = id === chatId ? currentTitle() : chatTitle(file);
+      const title = titles[id] || (id === chatId ? currentTitle() : chatTitle(file));
       if (!title && id !== chatId) {
         // Пустые чаты не копятся: их файлы убираются
         if (id !== 'main') for (const f of Object.values(chatFiles(id))) fs.rmSync(f, { force: true });
@@ -561,6 +565,17 @@ export async function startWeb({ cfg, mode, port = 0, host = '127.0.0.1', token,
           warmUp({ unload: previous });
           return send(res, 200, snapshot());
         }
+        case '/api/chats/rename': {
+          if (!persist) return send(res, 400, { error: 'Чаты недоступны в этом режиме.' });
+          const id = String(body.id ?? '');
+          if (!CHAT_ID.test(id)) return send(res, 400, { error: 'Неизвестный чат' });
+          const titles = readTitles();
+          const title = String(body.title ?? '').replace(/\s+/g, ' ').trim().slice(0, 80);
+          if (title) titles[id] = title; else delete titles[id];
+          fs.mkdirSync(sessionDir, { recursive: true });
+          fs.writeFileSync(titlesFile, JSON.stringify(titles));
+          return send(res, 200, { chats: listChats() });
+        }
         case '/api/chats/new':
         case '/api/chats/open':
         case '/api/chats/delete': {
@@ -585,6 +600,10 @@ export async function startWeb({ cfg, mode, port = 0, host = '127.0.0.1', token,
             openChat(next ? next.id : newChatId());
           }
           for (const f of Object.values(chatFiles(id))) fs.rmSync(f, { force: true });
+          {
+            const titles = readTitles();
+            if (titles[id]) { delete titles[id]; fs.writeFileSync(titlesFile, JSON.stringify(titles)); }
+          }
           return send(res, 200, { chats: listChats() });
         }
         case '/api/answer':

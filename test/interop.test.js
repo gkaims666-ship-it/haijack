@@ -219,3 +219,68 @@ test('haijack как сервер MCP: список инструментов и 
     mock.server.close();
   }
 });
+
+test('haijack как «модель»: OpenAI-совместимый адрес, обычный ответ и поток', async () => {
+  const { startApiServer, taskFromMessages } = await import('../src/api-server.js');
+  assert.equal(taskFromMessages([{ role: 'assistant', content: 'привет' }]), '');
+  const task = taskFromMessages([{ role: 'system', content: 'Будь краток' }, { role: 'user', content: 'первый' }, { role: 'assistant', content: 'ответ' }, { role: 'user', content: [{ type: 'text', text: 'второй' }] }]);
+  assert.match(task, /^второй\n\n# Предыдущий разговор[\s\S]*Пользователь: первый[\s\S]*Ассистент: ответ[\s\S]*Будь краток/);
+
+  const mock = await startMock();
+  const cwd = tmp();
+  fs.writeFileSync(path.join(cwd, 'README.md'), '# demo\n');
+  const saved = { key: process.env.ANTHROPIC_API_KEY, url: process.env.ANTHROPIC_BASE_URL };
+  process.env.ANTHROPIC_API_KEY = 'test-key'; process.env.ANTHROPIC_BASE_URL = mock.url;
+  const api = await startApiServer({ port: 0, cwd, key: 'hj-test' });
+  const base = `http://127.0.0.1:${api.port}/v1`;
+  const headers = { authorization: 'Bearer hj-test', 'content-type': 'application/json' };
+  try {
+    assert.equal((await fetch(`${base}/models`)).status, 401);
+    assert.equal((await fetch(`${base}/models`, { headers: { authorization: 'Bearer wrong!!' } })).status, 401);
+    assert.deepEqual((await (await fetch(`${base}/models`, { headers })).json()).data.map((m) => m.id), ['haijack', 'haijack-ask']);
+
+    const plain = await (await fetch(`${base}/chat/completions`, { method: 'POST', headers, body: JSON.stringify({ model: 'haijack-ask', messages: [{ role: 'user', content: 'что делает проект?' }] }) })).json();
+    assert.equal(plain.object, 'chat.completion');
+    assert.ok(plain.choices[0].message.content.length > 0);
+    assert.doesNotMatch(plain.choices[0].message.content, /^Ошибка/);
+
+    const res = await fetch(`${base}/chat/completions`, { method: 'POST', headers, body: JSON.stringify({ model: 'haijack-ask', stream: true, messages: [{ role: 'user', content: 'что делает проект?' }] }) });
+    assert.match(res.headers.get('content-type'), /event-stream/);
+    const body = await res.text();
+    const events = body.split('\n\n').filter(Boolean).map((e) => e.replace(/^data: /, ''));
+    assert.equal(events.pop(), '[DONE]');
+    const parsed = events.map((e) => JSON.parse(e));
+    assert.equal(parsed[0].choices[0].delta.role, 'assistant');
+    assert.equal(parsed[parsed.length - 1].choices[0].finish_reason, 'stop');
+    assert.ok(parsed.map((p) => p.choices[0].delta.content || '').join('').length > 0);
+
+    assert.equal((await fetch(`${base}/chat/completions`, { method: 'POST', headers, body: JSON.stringify({ messages: [] }) })).status, 400);
+    assert.equal((await fetch(`${base}/embeddings`, { method: 'POST', headers, body: '{}' })).status, 404);
+  } finally {
+    await api.close(); mock.server.close();
+    if (saved.key === undefined) delete process.env.ANTHROPIC_API_KEY; else process.env.ANTHROPIC_API_KEY = saved.key;
+    if (saved.url === undefined) delete process.env.ANTHROPIC_BASE_URL; else process.env.ANTHROPIC_BASE_URL = saved.url;
+  }
+});
+
+test('команды /mcp и /open; переименование чата', async () => {
+  const { Session, openInEditor } = await import('../src/session.js');
+  const { silentUi } = await import('./helpers.js');
+  const ui = silentUi();
+  const session = new Session({ cfg: { cwd: tmp(), models: {}, local: {} }, orchestrator: {}, usage: {}, ui });
+  await session.handle('/mcp');
+  assert.match(ui.log.join('\n'), /не подключены/);
+  await session.handle('/open notepad');
+  assert.match(ui.log.join('\n'), /Неизвестный редактор/);
+  assert.equal(await openInEditor('no-such-editor-xyz', os.tmpdir()), false);
+  assert.equal(await openInEditor(process.execPath, path.join(here, 'fake-ok.mjs')), false); // файла нет — редактор «не запустился»
+
+  const { startWeb } = await import('../src/web/server.js');
+  const { buildConfig } = await import('../src/config.js');
+  const web = await startWeb({ cfg: buildConfig(tmp()) });
+  const post = async (route, body) => (await fetch(`http://127.0.0.1:${web.port}${route}?t=${web.token}`, { method: 'POST', headers: { 'content-type': 'application/json', 'x-lcc': '1' }, body: JSON.stringify(body) })).json();
+  try {
+    assert.deepEqual((await post('/api/chats/rename', { id: 'main', title: '  Мой   проект ' })).chats.map((c) => c.title), ['Мой проект']);
+    assert.deepEqual((await post('/api/chats/rename', { id: 'main', title: '' })).chats.map((c) => c.title), ['Новый чат']);
+  } finally { web.close(); await web.closed; }
+});
