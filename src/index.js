@@ -112,6 +112,12 @@ export async function main(argv = process.argv.slice(2), boot = {}) {
   try { args = parseArgs(argv); } catch (e) { console.error(e.message); return 2; }
   if (args.help) { console.log(USAGE); return 0; }
   if (args.version) { console.log(VERSION); return 0; }
+  if (args.rest[0] === 'mcp' || args.rest[0] === 'serve') {
+    // Долго работающие режимы без экрана: непредвиденная ошибка в одной задаче не должна завершать программу
+    const keepAlive = (err) => console.error(`haijack: ${err?.stack || err}`);
+    process.on('uncaughtException', keepAlive);
+    process.on('unhandledRejection', keepAlive);
+  }
   if (args.rest[0] === 'mcp') {
     // Сервер MCP: stdout занят протоколом, поэтому до этого места и дальше в него ничего не пишется
     const { serveMcp } = await import('./mcp/server.js');

@@ -187,18 +187,28 @@ export async function startWeb({ cfg, mode, port = 0, host = '127.0.0.1', token,
     if (cfg.local.fallbackModel && !has(cfg.local.fallbackModel)) cfg.local.fallbackModel = '';
   }
 
-  async function warmUp({ unload = '' } = {}) {
+  // Сервер моделей могли запустить позже программы или модель ещё докачивается: при ошибке проверка
+  // повторяется сама, пока не получится. Пользователю ничего перезапускать не нужно.
+  let retryTimer = null;
+  const RETRY_MS = Number(process.env.LCC_WARM_RETRY_MS) || 8000;
+  async function warmUp({ unload = '', quiet = false } = {}) {
+    clearTimeout(retryTimer);
     warmCtl?.abort();
     primeCtl?.abort();
     if (!warm || cfg.provider !== 'local') { modelState = { status: '', note: '' }; pushState(); return; }
     const ac = new AbortController();
     warmCtl = ac;
-    modelState = { status: cfg.model ? 'loading' : '', note: '' };
-    pushState();
+    if (!quiet) { modelState = { status: cfg.model ? 'loading' : '', note: '' }; pushState(); }
+    const again = () => {
+      if (closing || ac.signal.aborted) return;
+      clearTimeout(retryTimer);
+      retryTimer = setTimeout(() => { if (!running && modelState.status === 'error') warmUp({ quiet: true }); else again(); }, RETRY_MS);
+      retryTimer.unref?.();
+    };
     try {
       const health = await checkLocalServer(cfg.local, cfg.model, ac.signal);
       if (ac.signal.aborted) return;
-      if (!health.models.length && !health.ok) { modelState = { status: 'error', note: health.problem }; pushState(); return; }
+      if (!health.models.length && !health.ok) { modelState = { status: 'error', note: health.problem }; pushState(); again(); return; }
       if (!health.ok && health.models.length === 1) {
         // Установлена одна модель — выбирать не из чего, работаем с ней
         const only = health.models[0];
@@ -208,6 +218,7 @@ export async function startWeb({ cfg, mode, port = 0, host = '127.0.0.1', token,
       } else if (!health.ok) {
         modelState = { status: 'error', note: cfg.model ? `Модель ${cfg.model} не скачана. Выберите другую из установленных.` : 'Выберите модель.' };
         pushState();
+        again();
         return;
       }
       reconcile(health.models);
@@ -218,6 +229,7 @@ export async function startWeb({ cfg, mode, port = 0, host = '127.0.0.1', token,
     } catch (err) {
       if (ac.signal.aborted) return;
       modelState = { status: 'error', note: err.message };
+      again();
     }
     pushState();
     primeSoon();
@@ -275,6 +287,7 @@ export async function startWeb({ cfg, mode, port = 0, host = '127.0.0.1', token,
     closing = true;
     clearTimeout(stopTimer);
     clearTimeout(primeTimer);
+    clearTimeout(retryTimer);
     warmCtl?.abort();
     primeCtl?.abort();
     mcp.stop();
