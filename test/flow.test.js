@@ -186,27 +186,39 @@ test('непрерывная задача: итерации идут до ост
   assert.ok(ui.log.some((l) => /print:Итоги непрерывной задачи \(итераций: 2\)/.test(l)));
 });
 
-test('непрерывная задача останавливается сама после трёх неудач подряд', async () => {
+test('непрерывная задача бесконечна: неудачи подряд дают паузу, а не остановку', async () => {
+  process.env.LCC_LOOP_PAUSE_MS = '5';
   const { session, ui } = setup(() => { throw new Error('API 529: overloaded'); });
-  await session.handle('/loop делай');
-  assert.ok(ui.log.some((l) => /warn:Непрерывная задача остановлена: 3 итерации подряд не удались/.test(l)));
-  assert.equal(ui.log.filter((l) => l === 'error:API 529: overloaded').length, 3);
+  // Останавливает только пользователь — здесь на шестой итерации
+  const info = ui.info;
+  ui.info = (s) => { info(s); if (s === 'Итерация 6') session.abort(); };
+  try { await session.handle('/loop делай'); } finally { delete process.env.LCC_LOOP_PAUSE_MS; }
+  assert.equal(ui.log.filter((l) => l === 'error:API 529: overloaded').length, 5);
+  assert.deepEqual(ui.log.filter((l) => /^warn:Неудач подряд/.test(l)).map((l) => l.match(/Неудач подряд: (\d)/)[1]), ['3', '4', '5']);
+  assert.ok(!ui.log.some((l) => /остановлена/.test(l)));
+  assert.ok(ui.log.some((l) => /print:Итоги непрерывной задачи \(итераций: 5\)/.test(l)));
+  assert.equal(session.looping, false);
 });
 
-test('непрерывная задача останавливается сама, когда три итерации подряд ничего не изменили', async () => {
+test('непрерывная задача бесконечна: когда изменения кончились, модель получает указание искать глубже', async () => {
   let plans = 0;
+  const prompts = [];
   const { session, ui } = setup((role, n, req) => {
-    if (role === 'architect') { plans++; return PLAN; }
+    if (role === 'architect') { plans++; prompts.push(lastUserText(req)); return PLAN; }
     // Первая итерация меняет файл, дальше менять нечего
     if (role === 'coder') return plans === 1 ? coderWrites('a.txt', () => 'готово\n')(n, req) : 'Улучшать больше нечего.';
     if (role === 'reviewer') return 'ВЕРДИКТ: OK';
     return 'СТАТУС: PASS';
   });
+  const info = ui.info;
+  ui.info = (s) => { info(s); if (s === 'Итерация 7') session.abort(); };
   await session.handle('/loop улучшай a.txt');
-  assert.equal(plans, 4, 'одна итерация с изменением и три холостых');
-  assert.ok(ui.log.some((l) => /done:Непрерывная задача остановлена: 3 итерации подряд ничего не изменили/.test(l)), ui.log.join('\n'));
-  assert.ok(ui.log.some((l) => /print:Итоги непрерывной задачи \(итераций: 4\)/.test(l)));
-  assert.equal(session.looping, false);
+  assert.equal(plans, 6, 'цикл не остановился сам');
+  // Итерации 2–4 — обычные; после трёх холостых подряд (2, 3, 4) подсказка появляется с пятой
+  assert.doesNotMatch(prompts[3], /Последние итерации ничего не изменили/);
+  assert.match(prompts[4], /Последние итерации ничего не изменили[\s\S]*недостающие тесты/);
+  assert.match(prompts[5], /Последние итерации ничего не изменили/);
+  assert.ok(!ui.log.some((l) => /остановлена/.test(l)));
 });
 
 test('задача про само приложение: программа предлагает режим «приложение», отказ запоминает', async () => {
