@@ -11,6 +11,7 @@ import path from 'node:path';
 import { CONFIG_DIR } from '../config.js';
 import { parseSSE } from '../api/anthropic.js';
 import { VERSION } from '../version.js';
+import { spawnSpec } from '../platform.js';
 
 export const MCP_FILE = path.join(CONFIG_DIR, 'mcp.json');
 const TRUST_FILE = path.join(CONFIG_DIR, 'mcp-trust.json');
@@ -32,9 +33,10 @@ class StdioTransport {
     this.nextId = 1;
     this.stderr = '';
     this.closed = false;
-    // На Windows npx и подобные — это .cmd-файлы: напрямую они не запускаются
-    this.child = spawn(def.command, def.args || [], {
-      cwd, env: { ...process.env, ...(def.env || {}) }, stdio: ['pipe', 'pipe', 'pipe'], shell: process.platform === 'win32', windowsHide: true,
+    // На Windows npx и подобные — это .cmd-файлы: они запускаются через оболочку, с аргументами в кавычках
+    const spec = spawnSpec(def.command, (def.args || []).map(String));
+    this.child = spawn(spec.command, spec.args, {
+      cwd, env: { ...process.env, ...(def.env || {}) }, stdio: ['pipe', 'pipe', 'pipe'], shell: spec.shell, windowsHide: true,
     });
     let buf = '';
     this.child.stdout.setEncoding('utf8');

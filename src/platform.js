@@ -152,3 +152,14 @@ export function platformPromptBlock(cwd) {
 }
 
 export { isWindows, isTermux, isAndroidApp };
+
+/**
+ * Как запустить внешнюю команду с аргументами. На Windows многие команды (npx, code, cursor) — это .cmd-файлы,
+ * которые запускаются только через оболочку, а оболочка сама аргументы не экранирует: путь с пробелом
+ * распался бы на части. Поэтому там аргументы берутся в кавычки. Программы .exe запускаются напрямую.
+ */
+export function spawnSpec(command, args = [], platform = process.platform) {
+  if (platform !== 'win32' || /\.exe$/i.test(command)) return { command, args, shell: false };
+  const quote = (a) => (a === '' || /[\s"&|<>^()%!,;=]/.test(a) ? `"${String(a).replace(/"/g, '""')}"` : String(a));
+  return { command: quote(command), args: args.map(quote), shell: true };
+}
