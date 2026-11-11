@@ -289,6 +289,14 @@ button.cat-item:hover { padding-left: 8px; }
 .think.live > summary::before { animation: carry 1.2s ease-in-out infinite; opacity: 1; }
 .think > summary:hover { color: var(--muted); }
 .think .think-body { margin: 6px 0 4px 3px; padding: 2px 0 2px 14px; border-left: 1px solid var(--line-strong); color: var(--muted); font-size: 13.5px; line-height: 1.55; white-space: pre-wrap; overflow-wrap: anywhere; max-height: 260px; overflow-y: auto; }
+.plan { margin: 12px 0; padding: 12px 16px; background: var(--panel); border-radius: 16px; }
+.plan-head { font-size: 12.5px; color: var(--faint); margin-bottom: 6px; }
+.plan-item { display: flex; gap: 11px; align-items: baseline; padding: 3px 0; color: var(--muted); font-size: 14px; }
+.plan-item i { width: 11px; height: 11px; border-radius: 50%; border: 1.5px solid var(--faint); flex: none; transform: translateY(1px); }
+.plan-item.in_progress { color: var(--text); }
+.plan-item.in_progress i { border-color: var(--reviewer); background: var(--reviewer); box-shadow: 0 0 9px var(--reviewer); }
+.plan-item.done i { background: var(--ok); border-color: var(--ok); }
+.plan-item.done span { color: var(--faint); text-decoration: line-through; text-decoration-color: rgba(150, 180, 255, .25); }
 .md table { border-collapse: collapse; margin: 0 0 13px; font-size: 14px; display: block; overflow-x: auto; max-width: 100%; }
 .md th, .md td { border-bottom: 1px solid var(--line); padding: 7px 14px 7px 0; text-align: left; vertical-align: top; }
 .md th, .md td { overflow-wrap: normal; word-break: normal; min-width: 5.5em; }
@@ -509,6 +517,7 @@ textarea.input { padding: 10px 14px; min-height: 96px; resize: vertical; line-he
       <small>Добавляются к инструкциям каждого агента и действуют во всех чатах.</small></label>
     <label class="field"><span>Заходов на задачу</span><input class="input" id="s-cycles" type="number" min="0" max="1000" inputmode="numeric">
       <small>Если после захода остались замечания или упавшие проверки, работа начинается заново. 0 — без ограничения: задача выполняется, пока не будет готова или пока вы её не остановите.</small></label>
+    <label class="switch" id="s-notify-box"><input type="checkbox" id="s-notify"><span><b>Уведомлять о завершении задачи</b><small>Системное уведомление, когда задача закончилась, а окно программы свёрнуто или не на виду.</small></span></label>
     <label class="switch"><input type="checkbox" id="s-memory"><span><b>Долговременная память</b><small>После каждой задачи программа записывает, что стоит помнить. Память сохраняется при очистке диалога и перезапуске.</small></span></label>
 
     <h3>Телефон и компьютер</h3>
@@ -606,7 +615,7 @@ textarea.input { padding: 10px 14px; min-height: 96px; resize: vertical; line-he
   var thinkingEl = null, asks = {}, attached = [], loopOn = false, settings = null, loginBusy = false;
   var thinkEl = null, thinkText = null, thinkRole = null, thinkStart = 0, thinkLive = false; // блок размышлений модели
   var lastSay = null, sayLabel = '', lastUserRow = null, transcript = [];  // последняя реплика, запись диалога для сохранения
-  var queuedImages = [];
+  var queuedImages = [], planEl = null;
   var lastInput = 0, queued = null, doneMark = false, chatKey = null, es = null, pasted = 0;
   var touch = window.matchMedia('(pointer: coarse)').matches;
   var FENCE = '\x60\x60\x60';
@@ -983,7 +992,7 @@ textarea.input { padding: 10px 14px; min-height: 96px; resize: vertical; line-he
     $('empty').hidden = false;
     toolEl = null; outEl = null; thinkingEl = null; asks = {}; visited = {}; activeRole = null;
     clearInterval(thinkingTimer); thinkingTimer = null;
-    thinkEl = null; thinkText = null; thinkRole = null; lastSay = null; lastUserRow = null; transcript = []; lastInput = 0;
+    thinkEl = null; thinkText = null; thinkRole = null; lastSay = null; lastUserRow = null; transcript = []; lastInput = 0; planEl = null;
     workEl = null; workInner = null; workRole = null; stageRole = null;
     drawRelay();
   }
@@ -1014,7 +1023,19 @@ textarea.input { padding: 10px 14px; min-height: 96px; resize: vertical; line-he
     var status = $('model-status'), noteText = String(ev.modelNote || '').split('\n')[0];
     status.className = ev.modelState === 'error' ? 'error' : '';
     status.textContent = !local ? '' : ev.modelState === 'loading' ? 'Модель загружается в память… ' : noteText ? noteText + ' ' : '';
-    if (wasBusy && !ev.busy) { if (document.hidden) doneMark = true; setTimeout(flushQueue, 0); }
+    if (wasBusy && !ev.busy) {
+      if (document.hidden) {
+        doneMark = true;
+        // Окно свёрнуто или закрыто другим — сообщаем о завершении системным уведомлением, если оно включено
+        try {
+          if (!queued && localStorage.getItem('haijack-notify') === '1' && window.Notification && Notification.permission === 'granted') {
+            var n = new Notification('haijack', { body: 'Задача завершена', tag: 'haijack-done' });
+            n.onclick = function () { window.focus(); n.close(); };
+          }
+        } catch (e) { /* уведомления недоступны — остаётся отметка в заголовке окна */ }
+      }
+      setTimeout(flushQueue, 0);
+    }
     document.title = (ev.busy ? '● ' : doneMark ? '✓ ' : '') + 'haijack';
     if (!ev.busy) { setThinking(null); if (activeRole) { visited[activeRole] = true; activeRole = null; } }
     drawRelay();
@@ -1047,7 +1068,7 @@ textarea.input { padding: 10px 14px; min-height: 96px; resize: vertical; line-he
       case 'reset': resetLog(); break;
       case 'pull': drawPull(ev); break;
       case 'user':
-        endSay(); closeWork(); closeThink(); visited = {}; activeRole = null; stageRole = null; lastSay = null; drawRelay();
+        endSay(); closeWork(); closeThink(); visited = {}; activeRole = null; stageRole = null; lastSay = null; planEl = null; drawRelay();
         add(userRow(ev.text, ev.images)); toBottom();
         transcript.push({ who: 'Вы', text: ev.text });
         break;
@@ -1067,6 +1088,21 @@ textarea.input { padding: 10px 14px; min-height: 96px; resize: vertical; line-he
         keepBottom(function () {
           thinkText.appendData(thinkText.data ? ev.delta : ev.delta.replace(/^\s+/, ''));
           thinkEl.lastChild.scrollTop = thinkEl.lastChild.scrollHeight;
+        });
+        break;
+      case 'plan':
+        // План работы агента: один блок на задачу, отметки обновляются на месте
+        endSay(); closeThink();
+        if (!planEl) { closeWork(); planEl = el('div', 'plan'); add(planEl); }
+        keepBottom(function () {
+          var done = ev.items.filter(function (i) { return i.status === 'done'; }).length;
+          planEl.textContent = '';
+          planEl.appendChild(el('div', 'plan-head', 'План · выполнено ' + done + ' из ' + ev.items.length));
+          ev.items.forEach(function (i) {
+            var row = el('div', 'plan-item ' + (i.status === 'done' || i.status === 'in_progress' ? i.status : 'pending'));
+            row.appendChild(el('i')); row.appendChild(el('span', '', i.text));
+            planEl.appendChild(row);
+          });
         });
         break;
       case 'retext':
@@ -1276,10 +1312,39 @@ textarea.input { padding: 10px 14px; min-height: 96px; resize: vertical; line-he
     ['/yes', 'не спрашивать перед записью файлов и командами']
   ];
   var slashItems = [], slashSel = 0;
-  function hideSlash() { slashItems = []; $('slash').hidden = true; }
+  function hideSlash() { slashItems = []; mention = false; mentionSeq++; $('slash').hidden = true; }
+  // Подстановка файла проекта: «@» и часть имени. В сообщение вставляется путь — агент прочитает файл сам.
+  var mention = false, mentionTimer = null, mentionSeq = 0;
+  function mentionQuery() {
+    var m = input.value.slice(0, input.selectionStart).match(/(?:^|\s)@([^\s@]*)$/);
+    return m ? m[1] : null;
+  }
+  function drawMention() {
+    var q = mentionQuery();
+    clearTimeout(mentionTimer);
+    if (q === null) { if (mention) { mention = false; hideSlash(); } return; }
+    var seq = ++mentionSeq;
+    mentionTimer = setTimeout(function () {
+      api('GET', '/api/files?q=' + encodeURIComponent(q)).then(function (r) {
+        if (seq !== mentionSeq || mentionQuery() === null) return;
+        mention = true;
+        slashItems = r.files.map(function (f) { return [f, '']; });
+        slashSel = 0;
+        renderMenu();
+      }, function () { /* подсказка необязательна */ });
+    }, 120);
+  }
   function drawSlash() {
-    var v = input.value, menu = $('slash');
+    var v = input.value;
+    // Список файлов уже открыт и «@» ещё набирается — обновляем его без мигания
+    if (mention && mentionQuery() !== null) { drawMention(); return; }
+    mention = false;
     slashItems = /^\/[a-z]*$/i.test(v) ? COMMANDS.filter(function (c) { return c[0].indexOf(v.toLowerCase()) === 0 && c[0] !== v; }) : [];
+    renderMenu();
+    if (!slashItems.length) drawMention();
+  }
+  function renderMenu() {
+    var menu = $('slash');
     menu.hidden = !slashItems.length;
     if (!slashItems.length) return;
     $('model-menu').hidden = true;
@@ -1292,11 +1357,19 @@ textarea.input { padding: 10px 14px; min-height: 96px; resize: vertical; line-he
       menu.appendChild(b);
     });
   }
-  function pickSlash(i) { input.value = slashItems[i][0]; hideSlash(); input.focus(); grow(); }
+  function pickSlash(i) {
+    if (mention) {
+      var pos = input.selectionStart, before = input.value.slice(0, pos).replace(/@[^\s@]*$/, '@' + slashItems[i][0] + ' ');
+      input.value = before + input.value.slice(pos);
+      mention = false; hideSlash(); input.focus(); input.setSelectionRange(before.length, before.length); grow();
+      return;
+    }
+    input.value = slashItems[i][0]; hideSlash(); input.focus(); grow();
+  }
   input.addEventListener('input', function () { grow(); slashSel = 0; drawSlash(); });
   input.addEventListener('keydown', function (e) {
     if (slashItems.length) {
-      if (e.key === 'ArrowDown' || e.key === 'ArrowUp') { e.preventDefault(); slashSel = (slashSel + (e.key === 'ArrowDown' ? 1 : slashItems.length - 1)) % slashItems.length; drawSlash(); return; }
+      if (e.key === 'ArrowDown' || e.key === 'ArrowUp') { e.preventDefault(); slashSel = (slashSel + (e.key === 'ArrowDown' ? 1 : slashItems.length - 1)) % slashItems.length; renderMenu(); return; }
       if (e.key === 'Tab' || (e.key === 'Enter' && !e.shiftKey)) { e.preventDefault(); pickSlash(slashSel); return; }
       if (e.key === 'Escape') { e.stopPropagation(); hideSlash(); return; }
     }
@@ -1609,6 +1682,21 @@ textarea.input { padding: 10px 14px; min-height: 96px; resize: vertical; line-he
     probeLocal(true);
   }, 4000);
   $('s-doctor').onclick = function () { closeSheet(); sendText('/doctor'); };
+  // Уведомления: настройка хранится в этом окне; разрешение система спрашивает один раз
+  (function () {
+    var box = $('s-notify');
+    if (!window.Notification) { $('s-notify-box').hidden = true; return; }
+    try { box.checked = localStorage.getItem('haijack-notify') === '1' && Notification.permission === 'granted'; } catch (e) { box.checked = false; }
+    box.onchange = function () {
+      function save(on) { box.checked = on; try { localStorage.setItem('haijack-notify', on ? '1' : '0'); } catch (e) { /* настройка останется до закрытия окна */ } }
+      if (!box.checked) { save(false); return; }
+      if (Notification.permission === 'granted') { save(true); return; }
+      Notification.requestPermission().then(function (p) {
+        save(p === 'granted');
+        if (p !== 'granted') showError($('s-error'), 'Уведомления запрещены в настройках системы или браузера для этого окна.');
+      }, function () { save(false); });
+    };
+  })();
   $('l-load').onclick = function () { $('l-load').disabled = true; probeLocal(false).then(function () { $('l-load').disabled = false; }); };
   $('login-form').onsubmit = function (e) {
     e.preventDefault();
