@@ -1,5 +1,5 @@
 #!/data/data/com.termux/files/usr/bin/bash
-# Local Claude Code — установка в Termux (Android).
+# haijack — установка в Termux (Android).
 # Запуск:  bash install-termux.sh
 set -e
 
@@ -9,7 +9,7 @@ if [ -z "$PREFIX" ] || [ ! -d "$PREFIX" ]; then
 fi
 
 cd "$(dirname "$0")"
-echo "=== Local Claude Code: установка в Termux ==="
+echo "=== haijack: установка в Termux ==="
 
 pkg update -y
 # nodejs-lts стабильнее на Android; git — для работы с репозиториями
@@ -23,7 +23,7 @@ npm install -g . --no-audit --no-fund
 
 # В Termux нет /usr/bin/env — исправляем shebang у установленного файла
 if command -v termux-fix-shebang >/dev/null 2>&1; then
-  termux-fix-shebang "$(npm root -g)/local-claude-code/bin/lcc.js" 2>/dev/null || true
+  termux-fix-shebang "$(npm root -g)/haijack/bin/lcc.js" 2>/dev/null || true
 fi
 
 mkdir -p "$HOME/.lcc"

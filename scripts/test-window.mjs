@@ -1,7 +1,7 @@
 // Проверка оконной сборки на Windows.
 //
-//   node scripts/test-window.mjs dist/LocalClaudeCode.exe           — с подставным браузером
-//   node scripts/test-window.mjs dist/LocalClaudeCode.exe --edge    — с настоящим Edge
+//   node scripts/test-window.mjs dist/haijack.exe           — с подставным браузером
+//   node scripts/test-window.mjs dist/haijack.exe --edge    — с настоящим Edge
 //
 // Подставной браузер (node) завершается сразу — так же ведёт себя процесс, которым запускают Edge.
 // Программа при этом обязана продолжать работу. С настоящим Edge дополнительно проверяется,

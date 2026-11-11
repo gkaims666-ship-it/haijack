@@ -18,7 +18,7 @@ import { spawn } from 'node:child_process';
 import { platformInfo } from './platform.js';
 
 const USAGE = `
-Local Claude Code v${VERSION} — терминальный ИИ-ассистент с 4 агентами
+haijack v${VERSION} — терминальный ИИ-ассистент с 4 агентами
 
 Использование:
   lcc                       интерактивный режим в текущей папке
@@ -167,7 +167,7 @@ export async function main(argv = process.argv.slice(2), boot = {}) {
       } : null,
     });
     bootOk();
-    console.log(`Local Claude Code v${VERSION} — веб-интерфейс запущен.`);
+    console.log(`haijack v${VERSION} — веб-интерфейс запущен.`);
     for (const url of web.urls) console.log(`  ${url}`);
     console.log('Ссылка содержит ключ доступа — не передавайте её другим. Ctrl+C — остановить.');
     const stop = () => web.close();

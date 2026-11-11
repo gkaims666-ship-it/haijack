@@ -106,7 +106,7 @@ export async function startRepl({ cfg, session, renderer, usage, notices = [] })
 
   const p = platformInfo();
   process.stdout.write(
-    `\n${c.bold(c.cyan(`${sym.bullet} Local Claude Code`))} ${c.dim('v' + VERSION)}\n` +
+    `\n${c.bold(c.cyan(`${sym.bullet} haijack`))} ${c.dim('v' + VERSION)}\n` +
     `${c.dim('Проект:')} ${cfg.cwd}\n` +
     `${c.dim('Среда:')}  ${p.os}, оболочка ${p.shell}\n` +
     `${c.dim('Модель:')} ${cfg.model}   ${c.dim('Режим:')} ${session.mode}${cfg.autoApprove ? c.yellow('   автоподтверждение ВКЛ') : ''}\n` +

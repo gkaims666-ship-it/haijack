@@ -26,34 +26,34 @@ jobs:
       - name: Тесты
         run: npm test
 
-      - name: Сборка lcc.exe
+      - name: Сборка haijack-cli.exe
         run: node scripts/build-exe.mjs
 
       - name: Проверка exe на мок-сервере API
-        run: node test/e2e.mjs dist/lcc.exe
+        run: node test/e2e.mjs dist/haijack-cli.exe
 
       - name: Проверка оконной сборки на мок-сервере API
-        run: node test/e2e.mjs dist/LocalClaudeCode.exe
+        run: node test/e2e.mjs dist/haijack.exe
 
       - name: Оконная сборка не завершается раньше окна
-        run: node scripts/test-window.mjs dist/LocalClaudeCode.exe
+        run: node scripts/test-window.mjs dist/haijack.exe
 
       - name: Оконная сборка с настоящим Edge
-        run: node scripts/test-window.mjs dist/LocalClaudeCode.exe --edge
+        run: node scripts/test-window.mjs dist/haijack.exe --edge
 
       - name: Контрольная сумма
         shell: pwsh
         run: |
-          $lines = foreach ($f in 'LocalClaudeCode.exe', 'lcc.exe') { "$((Get-FileHash dist/$f -Algorithm SHA256).Hash.ToLower())  $f" }
+          $lines = foreach ($f in 'haijack.exe', 'haijack-cli.exe') { "$((Get-FileHash dist/$f -Algorithm SHA256).Hash.ToLower())  $f" }
           $lines | Out-File -Encoding ascii dist/sha256.txt
           Get-Content dist/sha256.txt
 
       - uses: actions/upload-artifact@v4
         with:
-          name: lcc-windows-x64
+          name: haijack-windows-x64
           path: |
-            dist/LocalClaudeCode.exe
-            dist/lcc.exe
+            dist/haijack.exe
+            dist/haijack-cli.exe
             dist/sha256.txt
           if-no-files-found: error
 
@@ -75,11 +75,11 @@ jobs:
             flags="--prerelease"
             gh release delete "$tag" --cleanup-tag --yes 2>/dev/null || true
           fi
-          gh release create "$tag" dist/LocalClaudeCode.exe dist/lcc.exe dist/sha256.txt \
+          gh release create "$tag" dist/haijack.exe dist/haijack-cli.exe dist/sha256.txt \
             --target "$GITHUB_SHA" --title "$title" $flags \
             --notes "Windows x64, Node.js внутри. Коммит ${GITHUB_SHA::7}.
 
-          **LocalClaudeCode.exe** — приложение с окном: запускается двойным щелчком, открывает интерфейс в отдельном окне, закрытие окна завершает программу.
-          **lcc.exe** — то же самое для терминала: откройте терминал в папке проекта и выполните \`путь\\к\\lcc.exe\`.
+          **haijack.exe** — приложение с окном: запускается двойным щелчком, открывает интерфейс в отдельном окне, закрытие окна завершает программу.
+          **haijack-cli.exe** — то же самое для терминала: откройте терминал в папке проекта и выполните \`путь\\к\\haijack-cli.exe\`.
 
           Файлы не подписаны, поэтому SmartScreen при первом запуске покажет предупреждение: «Подробнее» → «Выполнить в любом случае»."

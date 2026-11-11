@@ -1,4 +1,4 @@
-﻿# Подготовка локальной модели для Local Claude Code через Ollama (Windows).
+﻿# Подготовка локальной модели для haijack через Ollama (Windows).
 #
 #   powershell -ExecutionPolicy Bypass -File scripts\setup_local_llm.ps1 --model <имя> [--fallback <имя>] [--write-env]
 #
@@ -66,7 +66,7 @@ $EnvLines = @(
 if ($Fallback) { $EnvLines += "LOCAL_LLM_FALLBACK_MODEL=$Fallback" }
 
 Write-Host ''
-Write-Host 'Готово. Настройки для Local Claude Code:'
+Write-Host 'Готово. Настройки для haijack:'
 $EnvLines | ForEach-Object { Write-Host $_ }
 
 if ($WriteEnv) {

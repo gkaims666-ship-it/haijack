@@ -1,6 +1,6 @@
 // Сборка одного исполняемого файла (Node.js Single Executable Application).
 //
-//   node scripts/build-exe.mjs        -> dist/lcc.exe (Windows) или dist/lcc (Linux/macOS)
+//   node scripts/build-exe.mjs        -> dist/haijack-cli.exe (Windows) или dist/haijack-cli (Linux/macOS)
 //
 // Внутри exe — сам Node.js и исходный код программы как набор файлов. При первом запуске код
 // распаковывается в ~/.lcc/factory/<версия> и запускается оттуда обычным загрузчиком bin/lcc.js.
@@ -18,8 +18,8 @@ import { fileURLToPath } from 'node:url';
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const dist = path.join(root, 'dist');
 const isWindows = process.platform === 'win32';
-const output = path.join(dist, isWindows ? 'lcc.exe' : 'lcc');
-const guiOutput = path.join(dist, 'LocalClaudeCode.exe'); // то же приложение без консольного окна (только Windows)
+const output = path.join(dist, isWindows ? 'haijack-cli.exe' : 'haijack-cli');
+const guiOutput = path.join(dist, 'haijack.exe'); // то же приложение без консольного окна (только Windows)
 
 // Значение задано документацией Node.js: по этой метке postject находит место для вставки кода
 const SEA_FUSE = 'NODE_SEA_FUSE_fce680ab2cc467b6e072b8b5df1996b2';
@@ -39,7 +39,7 @@ function run(command, args) {
 /** Значок приложения: тёмный квадрат со скруглением и четыре цветные полосы. Рисуется прямо здесь. */
 function buildIcon() {
   const size = 256;
-  const bars = [[62, 140, [0xA7, 0x8B, 0xFA]], [98, 102, [0x34, 0xD3, 0xB6]], [134, 124, [0xF2, 0xB4, 0x5A]], [170, 76, [0x6A, 0xA8, 0xFF]]];
+  const bars = [[62, 140, [0xFF, 0x4F, 0x8B]], [98, 102, [0xFF, 0x7B, 0x47]], [134, 124, [0xFF, 0xAE, 0x3B]], [170, 76, [0xF2, 0xDC, 0x4A]]];
   const inRound = (x, y, x0, y0, w, h, r) => {
     const cx = Math.min(Math.max(x, x0 + r), x0 + w - r);
     const cy = Math.min(Math.max(y, y0 + r), y0 + h - r);
@@ -55,7 +55,7 @@ function buildIcon() {
         const px = x + (sx + 0.5) / S;
         const py = y + (sy + 0.5) / S;
         if (!inRound(px, py, 8, 8, 240, 240, 54)) continue;
-        let color = [0x0B, 0x0F, 0x14];
+        let color = [0x0C, 0x0C, 0x0E];
         for (const [top, width, c] of bars) if (inRound(px, py, 58, top, width, 24, 12)) color = c;
         r += color[0]; g += color[1]; b += color[2]; a += 255;
       }
@@ -97,8 +97,8 @@ function setIcon(exe) {
     const install = spawnSync('npm', ['install', '--no-save', '--no-audit', '--no-fund', '--prefix', `"${tools}"`, 'rcedit@4.0.1'], { cwd: root, stdio: 'inherit', shell: true });
     const rcedit = path.join(tools, 'node_modules', 'rcedit', 'bin', 'rcedit-x64.exe');
     if (install.status !== 0 || !fs.existsSync(rcedit)) throw new Error('не удалось получить rcedit');
-    const res = spawnSync(rcedit, [exe, '--set-icon', icon, '--set-version-string', 'ProductName', 'Local Claude Code',
-      '--set-version-string', 'FileDescription', 'Local Claude Code', '--set-product-version', manifest.version, '--set-file-version', manifest.version], { stdio: 'inherit' });
+    const res = spawnSync(rcedit, [exe, '--set-icon', icon, '--set-version-string', 'ProductName', 'haijack',
+      '--set-version-string', 'FileDescription', 'haijack', '--set-product-version', manifest.version, '--set-file-version', manifest.version], { stdio: 'inherit' });
     if (res.status !== 0) throw new Error(`rcedit завершился с кодом ${res.status}`);
     console.log('Значок приложения установлен');
   } catch (err) {
@@ -143,7 +143,7 @@ const { createRequire } = require('node:module');
 const manifest = JSON.parse(sea.getAsset('manifest.json', 'utf8'));
 const home = process.env.LCC_HOME || path.join(os.homedir(), '.lcc');
 
-// Оконная сборка (LocalClaudeCode.exe) отличается от консольной одним полем в заголовке файла.
+// Оконная сборка (haijack.exe) отличается от консольной одним полем в заголовке файла.
 // Запущенная без аргументов, она открывает окно приложения; ошибки пишет в файл — консоли у неё нет.
 function isWindowed() {
   try {
