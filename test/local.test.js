@@ -133,7 +133,7 @@ for (const [ollama, style] of [[true, 'native'], [true, 'text'], [false, 'native
         // С Ollama клиент говорит на её собственном API: только так можно задать размер контекста
         assert.equal(route, '/api/chat');
         assert.deepEqual(body.options, { temperature: 0.2, top_p: 0.9, num_predict: 8192, num_ctx: 16384 });
-        assert.equal(body.keep_alive, '30m');
+        assert.equal(body.keep_alive, '60m');
         // Вызовы инструментов уходят обратно в формате Ollama: аргументы объектом, у результата — имя инструмента
         const withTool = mock.requests.find((r) => r.body.messages.some((m) => m.role === 'tool')).body.messages;
         const call = withTool.find((m) => m.tool_calls).tool_calls[0];
@@ -303,7 +303,7 @@ test('настройки: LLM_PROVIDER и LOCAL_LLM_* читаются как с
     const cfg = buildConfig(os.tmpdir());
     assert.equal(cfg.provider, 'local');
     assert.equal(cfg.model, 'big');
-    assert.deepEqual(cfg.local, { baseUrl: 'http://localhost:11434/v1', apiKey: 'ollama', fallbackModel: 'tiny', numCtx: 16384, timeoutMs: 60000, firstTimeoutMs: 900000 });
+    assert.deepEqual(cfg.local, { baseUrl: 'http://localhost:11434/v1', apiKey: 'ollama', fallbackModel: 'tiny', numCtx: 16384, timeoutMs: 60000, firstTimeoutMs: 900000, keepAlive: '60m', temperature: 0.2, think: '' });
     assert.equal(cfg.models.coder, 'big');
     assert.equal(cfg.models.executor, 'quick');
   } finally {

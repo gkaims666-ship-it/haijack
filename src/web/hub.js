@@ -60,9 +60,9 @@ export class EventHub {
   /** На диск текст агента и вывод команд пишутся целыми кусками, а не по одной дельте */
   #persist(event) {
     if (!this.file) return;
-    const key = event.t === 'text' ? `text:${event.role}` : event.t === 'cmd' ? `cmd:${event.shell ? 1 : 0}` : null;
+    const key = event.t === 'text' || event.t === 'think' ? `${event.t}:${event.role}` : event.t === 'cmd' ? `cmd:${event.shell ? 1 : 0}` : null;
     if (key && this.tail?.key === key) {
-      if (event.t === 'text') this.tail.event.delta += event.delta; else this.tail.event.chunk += event.chunk;
+      if (event.t === 'cmd') this.tail.event.chunk += event.chunk; else this.tail.event.delta += event.delta;
       return;
     }
     this.flush();
@@ -94,6 +94,21 @@ export class EventHub {
   subscribe(fn) {
     this.listeners.add(fn);
     return () => this.listeners.delete(fn);
+  }
+
+  /**
+   * Переключает шину на другой файл диалога (другой чат): прежний дописывается, новый загружается.
+   * Подключённые страницы должны перечитать историю с начала — об этом им сообщает вызывающий.
+   */
+  open(file) {
+    this.flush();
+    this.cancelAsks('no');
+    this.file = file;
+    this.buffer = [];
+    this.seq = 0;
+    this.tail = null;
+    try { fs.mkdirSync(path.dirname(file), { recursive: true }); } catch { /* нет доступа — без сохранения */ }
+    this.#load();
   }
 
   /** Очищает показанный диалог у всех подключённых клиентов и на диске */
@@ -153,6 +168,9 @@ export class WebRenderer {
   }
 
   agentText(meta, delta) { this.stopSpinner(); this.hub.emit({ t: 'text', role: meta.role, label: meta.label, delta }); }
+  /** Размышления модели: показываются по ходу, чтобы было видно, что работа идёт */
+  agentThought(meta, delta) { this.stopSpinner(); this.hub.emit({ t: 'think', role: meta.role, label: meta.label, delta }); }
+  agentStats(meta, stats) { this.hub.emit({ t: 'stats', role: meta.role, label: meta.label, ...stats }); }
   agentTextEnd() { this.hub.emit({ t: 'textEnd' }); }
 
   toolCall(meta, block) {

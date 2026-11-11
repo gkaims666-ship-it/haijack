@@ -219,8 +219,10 @@ export function loadProjectInstructions(cwd) {
  * @param {object} [opts]
  * @param {boolean} [opts.compact] короткие инструкции — для локальных моделей
  */
-export function buildSystemPrompt(role, cwd, memory = '', { compact = false } = {}) {
-  const parts = compact ? [COMPACT_BASE, COMPACT_ROLE[role]] : [BASE_POLICY];
+export function buildSystemPrompt(role, cwd, memory = '', { compact = false, custom = '' } = {}) {
+  // У локальной модели общая часть инструкций идёт первой и одинакова у всех агентов, а роль — последней:
+  // сервер модели не перечитывает совпадающее начало запроса, и смена агента обходится дешевле
+  const parts = compact ? [COMPACT_BASE] : [BASE_POLICY];
   if (!compact) {
     if (USES_ENGINEERING.has(role)) parts.push(ENGINEERING);
     parts.push(ROLE[role]);
@@ -234,6 +236,8 @@ export function buildSystemPrompt(role, cwd, memory = '', { compact = false } = 
   if (memory) {
     parts.push(`# Память о прошлой работе\nЗаписи из прошлых задач и сессий. Это подсказки, а не истина: код мог измениться — сверяйся с файлами.\n\n${memory.slice(0, limit)}`);
   }
+  if (custom) parts.push(`# Инструкции пользователя — выполняй их всегда\n${custom.slice(0, compact ? 2000 : 8000)}`);
+  if (compact) parts.push(COMPACT_ROLE[role]);
   return parts.join('\n\n');
 }
 
