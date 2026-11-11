@@ -23,6 +23,7 @@ function validEvent(e) {
   if (e.t === 'cmd') return typeof e.chunk === 'string';
   if (e.t === 'tool') return typeof e.name === 'string';
   if (e.t === 'summary') return Array.isArray(e.files);
+  if (e.t === 'plan') return Array.isArray(e.items) && e.items.every((i) => i && typeof i.text === 'string');
   return true;
 }
 
@@ -185,6 +186,8 @@ export class WebRenderer {
   agentText(meta, delta) { this.stopSpinner(); this.hub.emit({ t: 'text', role: meta.role, label: meta.label, delta }); }
   /** Размышления модели: показываются по ходу, чтобы было видно, что работа идёт */
   agentThought(meta, delta) { this.stopSpinner(); this.hub.emit({ t: 'think', role: meta.role, label: meta.label, delta }); }
+  /** План работы агента: список шагов с отметками */
+  plan(items) { this.hub.emit({ t: 'plan', items }); }
   /** Итоговый текст реплики отличается от показанного по ходу — экран заменяет его чистым вариантом */
   agentTextRewrite(meta, text) { this.hub.emit({ t: 'retext', role: meta.role, label: meta.label, text }); }
   agentStats(meta, stats) { this.hub.emit({ t: 'stats', role: meta.role, label: meta.label, ...stats }); }

@@ -25,6 +25,7 @@ import { platformInfo } from '../platform.js';
 import { selfStatus } from '../self/improve.js';
 import { mcp, parseMcpConfig, MCP_FILE } from '../mcp/client.js';
 import { githubToken } from '../tools/github.js';
+import { walk } from '../tools/fsutil.js';
 
 const MAX_BODY = 12 * 1024 * 1024;
 const IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/webp', 'image/gif'];
@@ -528,6 +529,22 @@ export async function startWeb({ cfg, mode, port = 0, host = '127.0.0.1', token,
           }
           case '/api/mcp':
             return send(res, 200, { servers: mcp.status() });
+          case '/api/files': {
+            // Файлы проекта для подстановки по «@» в поле ввода: сначала совпадения по имени, затем по пути
+            const q = (url.searchParams.get('q') || '').toLowerCase().replace(/\\/g, '/');
+            const byName = [];
+            const byPath = [];
+            let scanned = 0;
+            for (const e of walk(cfg.cwd, { maxDepth: 12, includeHidden: false })) {
+              if (e.isDir) continue;
+              if (++scanned > 20000 || byName.length >= 30) break; // в огромном проекте подсказка не должна тормозить
+              const rel = e.rel;
+              const lower = rel.toLowerCase();
+              if (!q || path.posix.basename(lower).includes(q)) byName.push(rel);
+              else if (lower.includes(q) && byPath.length < 30) byPath.push(rel);
+            }
+            return send(res, 200, { files: [...byName.sort(), ...byPath.sort()].slice(0, 30) });
+          }
           case '/api/chats':
             return send(res, 200, { chats: listChats() });
           case '/api/hf/search':

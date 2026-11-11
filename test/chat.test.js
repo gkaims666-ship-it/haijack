@@ -244,3 +244,33 @@ test('изображения: уходят модели в формате её �
     assert.ok(mock.requests.slice(mark).every((r) => r.body.messages.every((m) => !m.images)));
   } finally { await app.close(); mock.server.close(); }
 });
+
+test('план работы: агент записывает шаги, экран получает список; подсказка файлов по «@»', async () => {
+  const { executeTool, getTools, TOOLSETS } = await import('../src/tools/index.js');
+  assert.ok(TOOLSETS.coder.includes('update_plan') && !TOOLSETS.reviewer.includes('update_plan'));
+  const shown = [];
+  const ctx = { ui: { plan: (items) => shown.push(items) }, approve: async () => { throw new Error('подтверждение не нужно'); } };
+  const tools = getTools(['update_plan']);
+  const res = await executeTool({ name: 'update_plan', input: { items: [{ text: ' Прочитать  код ', status: 'done' }, { text: 'Написать тест', status: 'in_progress' }, { text: 'Проверить', status: 'странный' }, { text: '' }] } }, tools, ctx);
+  assert.deepEqual(res, { content: 'План обновлён: выполнено 1 из 3. Сейчас: Написать тест', isError: false });
+  assert.deepEqual(shown[0], [{ text: 'Прочитать код', status: 'done' }, { text: 'Написать тест', status: 'in_progress' }, { text: 'Проверить', status: 'pending' }]);
+  assert.equal((await executeTool({ name: 'update_plan', input: { items: [] } }, tools, ctx)).isError, true);
+  assert.equal((await executeTool({ name: 'update_plan', input: { items: 'нет' } }, tools, ctx)).isError, true);
+
+  const cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'lcc-files-'));
+  fs.mkdirSync(path.join(cwd, 'src', 'utils'), { recursive: true });
+  fs.mkdirSync(path.join(cwd, 'node_modules', 'pkg'), { recursive: true });
+  for (const f of ['README.md', 'src/app.js', 'src/utils/math.js', 'src/utils/app-config.json', 'node_modules/pkg/app.js', '.env']) fs.writeFileSync(path.join(cwd, f), 'x');
+  const cfg = localCfg(await startOpenAIMock().then((m) => { m.server.close(); return m; }));
+  cfg.cwd = cwd;
+  const app = await open(cfg, { persist: false, warm: false });
+  try {
+    assert.deepEqual((await app.get('/api/files?q=app')).files, ['src/app.js', 'src/utils/app-config.json']);
+    assert.deepEqual((await app.get('/api/files?q=utils')).files, ['src/utils/app-config.json', 'src/utils/math.js']);
+    assert.deepEqual((await app.get('/api/files?q=')).files, ['README.md', 'src/app.js', 'src/utils/app-config.json', 'src/utils/math.js']);
+    assert.deepEqual((await app.get('/api/files?q=нет-такого')).files, []);
+    // План доходит до экрана событием и переживает перезагрузку истории
+    app.web.hub.emit({ t: 'plan', items: shown[0] });
+    assert.ok(app.web.hub.buffer.some((e) => e.t === 'plan' && e.items.length === 3));
+  } finally { await app.close(); }
+});
