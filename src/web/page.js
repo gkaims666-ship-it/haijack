@@ -606,6 +606,7 @@ textarea.input { padding: 10px 14px; min-height: 96px; resize: vertical; line-he
   var thinkingEl = null, asks = {}, attached = [], loopOn = false, settings = null, loginBusy = false;
   var thinkEl = null, thinkText = null, thinkRole = null, thinkStart = 0, thinkLive = false; // блок размышлений модели
   var lastSay = null, sayLabel = '', lastUserRow = null, transcript = [];  // последняя реплика, запись диалога для сохранения
+  var queuedImages = [];
   var lastInput = 0, queued = null, doneMark = false, chatKey = null, es = null, pasted = 0;
   var touch = window.matchMedia('(pointer: coarse)').matches;
   var FENCE = '\x60\x60\x60';
@@ -1178,14 +1179,14 @@ textarea.input { padding: 10px 14px; min-height: 96px; resize: vertical; line-he
   // Написанное во время работы агентов не теряется: оно ждёт в очереди и уходит, когда задача закончится
   function drawQueued() {
     $('queued').hidden = !queued;
-    $('queued-text').textContent = queued ? queued.split('\n\n# Вложение: ')[0].replace(/\s+/g, ' ') : '';
+    $('queued-text').textContent = queued ? queued.split('\n\n# Вложение: ')[0].replace(/\s+/g, ' ') + (queuedImages.length ? ' · изображений: ' + queuedImages.length : '') : '';
   }
   function flushQueue() {
     if (!queued || state.busy) return;
-    var text = queued; queued = null; drawQueued();
-    sendText(text).then(function (ok) { if (!ok) { queued = text; drawQueued(); } });
+    var text = queued, images = queuedImages; queued = null; queuedImages = []; drawQueued();
+    sendText(text, images).then(function (ok) { if (!ok) { queued = text; queuedImages = images; drawQueued(); } });
   }
-  $('queued-cancel').onclick = function () { if (queued && !input.value) { input.value = queued.split('\n\n# Вложение: ')[0]; grow(); } queued = null; drawQueued(); input.focus(); };
+  $('queued-cancel').onclick = function () { if (queued && !input.value) { input.value = queued.split('\n\n# Вложение: ')[0]; grow(); } queued = null; queuedImages = []; drawQueued(); input.focus(); };
   // Ранее отправленные запросы: стрелка вверх в пустом поле возвращает их
   var sent = [], sentAt = -1, draft = '';
   try { sent = JSON.parse(localStorage.getItem('haijack-sent') || '[]'); if (!Array.isArray(sent)) sent = []; } catch (e) { sent = []; }
@@ -1206,8 +1207,8 @@ textarea.input { padding: 10px 14px; min-height: 96px; resize: vertical; line-he
     if (loopOn && text.charAt(0) !== '/' && text.charAt(0) !== '!') text = '/loop ' + text;
     var images = attached.filter(function (f) { return f.image; }).map(function (f) { return { name: f.name, media: f.image.media, data: f.image.data }; });
     if (state.busy) {
-      if (images.length) { note('warn', 'Сообщение с изображением можно отправить, когда закончится текущая задача.'); return; }
       queued = queued ? queued + '\n\n' + text : text;
+      queuedImages = queuedImages.concat(images).slice(0, 6);
       input.value = ''; attached = []; drawFiles(); grow(); drawQueued();
       return;
     }

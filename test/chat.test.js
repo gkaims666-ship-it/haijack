@@ -232,6 +232,11 @@ test('изображения: уходят модели в формате её �
     const shown = app.web.hub.buffer.find((e) => e.t === 'user' && e.text === 'что на картинке?');
     assert.deepEqual(shown.images, ['shot.png']);
     assert.doesNotMatch(fs.readFileSync(app.web.hub.file, 'utf8'), new RegExp(PIXEL.slice(0, 40)));
+    // «Повторить» отправляет задачу заново вместе с изображением
+    const beforeRetry = mock.requests.length;
+    assert.equal((await app.post('/api/retry')).status, 202);
+    await app.idle();
+    assert.ok(mock.requests.slice(beforeRetry).some((r) => r.body.messages.some((m) => m.images?.[0] === PIXEL)));
     // Следующая задача изображение уже не получает
     const mark = mock.requests.length;
     await app.post('/api/input', { text: 'ещё вопрос' });

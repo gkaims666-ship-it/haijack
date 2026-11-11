@@ -167,6 +167,7 @@ export async function startWeb({ cfg, mode, port = 0, host = '127.0.0.1', token,
     hub.open(chatFiles(id).events);
     orchestrator.openDialog(chatFiles(id).solo);
     session.lastTask = null;
+    lastImages = [];
     try { fs.mkdirSync(sessionDir, { recursive: true }); fs.writeFileSync(path.join(sessionDir, 'current'), id); } catch { /* выбор чата не сохранится — не страшно */ }
     hub.emit({ t: 'reload' }, { volatile: true }); // страницы перечитывают историю с начала
     pushState();
@@ -328,11 +329,13 @@ export async function startWeb({ cfg, mode, port = 0, host = '127.0.0.1', token,
   }
 
   // ---------- ввод ----------
+  let lastImages = [];
   async function handleInput(text, images = []) {
     running = true;
     clearTimeout(primeTimer);
     primeCtl?.abort(); // настоящий запрос важнее прогрева
     hub.emit(images.length ? { t: 'user', text, images: images.map((i) => i.name) } : { t: 'user', text });
+    if (!/^[/!]/.test(text.trim())) lastImages = images; // изображения последней задачи — для «Повторить»
     orchestrator.setImages(images);
     pushState();
     let outcome;
@@ -576,7 +579,7 @@ export async function startWeb({ cfg, mode, port = 0, host = '127.0.0.1', token,
           if (running) return send(res, 409, { error: 'Дождитесь окончания текущей задачи или остановите её.' });
           const again = session.takeRetry();
           if (!again) return send(res, 400, { error: 'Повторять пока нечего.' });
-          handleInput(again);
+          handleInput(again, lastImages);
           return send(res, 202, { ok: true });
         }
         case '/api/model': {
