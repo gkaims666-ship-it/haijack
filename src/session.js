@@ -88,6 +88,7 @@ export function looksLikeSelfTask(text) {
 
 const isAnswerOnly = (plan) => /РЕЖИМ:\s*ОТВЕТ/i.test(plan) && !/РЕЖИМ:\s*ИЗМЕНЕНИЯ/i.test(plan);
 const MAX_LOOP_FAILURES = 3; // подряд неудачных итераций непрерывной задачи до остановки
+const MAX_LOOP_IDLE = 3;     // столько итераций подряд без единого изменения — и непрерывная задача считается выполненной
 
 export class Session {
   /**
@@ -250,6 +251,7 @@ export class Session {
 
     const done = [];
     let failures = 0;
+    let idle = 0; // итерации подряд, которые завершились, но ничего не изменили
     let n = 0;
     try {
       while (!signal.aborted) {
@@ -269,6 +271,7 @@ export class Session {
           const summary = String(res.report || res.text || '').split('\n').find((l) => l.trim())?.slice(0, 200) || '';
           line = `${res.done ? 'выполнено' : 'НЕ завершено'} — ${what}${summary ? ` — ${summary}` : ''}`;
           failures = res.done ? 0 : failures + 1;
+          idle = res.done && !res.files?.length ? idle + 1 : 0;
         } catch (err) {
           if (err.name === 'AbortError' || signal.aborted) { log(`${n}. прервано пользователем`); throw err; }
           line = `ошибка: ${err.message}`;
@@ -277,6 +280,11 @@ export class Session {
         }
         done.push(line);
         log(`${n}. ${new Date().toISOString()} ${line}`);
+        if (idle >= MAX_LOOP_IDLE) {
+          // Работа закончилась сама: крутить модель вхолостую незачем
+          ui.done(`Непрерывная задача остановлена: ${MAX_LOOP_IDLE} итерации подряд ничего не изменили — похоже, улучшать больше нечего. Журнал: ${logFile}`);
+          break;
+        }
         if (failures >= MAX_LOOP_FAILURES) {
           ui.warn(`Непрерывная задача остановлена: ${MAX_LOOP_FAILURES} итерации подряд не удались. Журнал: ${logFile}`);
           break;
@@ -284,7 +292,11 @@ export class Session {
       }
     } finally {
       log(`\nОкончание: ${new Date().toISOString()}, итераций: ${done.length}`);
-      if (done.length) ui.print(`Итоги непрерывной задачи (${done.length}):\n${done.map((d, i) => `${i + 1}. ${d}`).join('\n')}\n\nЖурнал: ${logFile}`);
+      if (done.length) {
+        // В чат — последние итерации; полный список остаётся в журнале
+        const shown = done.map((d, i) => `${i + 1}. ${d}`).slice(-30);
+        ui.print(`Итоги непрерывной задачи (итераций: ${done.length}${done.length > shown.length ? `, показаны последние ${shown.length}` : ''}):\n${shown.join('\n')}\n\nЖурнал: ${logFile}`);
+      }
     }
   }
 
@@ -459,7 +471,8 @@ export class Session {
         timeoutMs: this.cfg.commandTimeoutMs,
         onData: (s) => this.ui.shellOutput(s),
       });
-      this.ui.info(`[код выхода ${res.code}${res.timedOut ? ', таймаут' : ''}]`);
+      if (this.controller.signal.aborted) this.ui.warn('Команда остановлена.');
+      else this.ui.info(`[код выхода ${res.code}${res.timedOut ? ', таймаут' : ''}]`);
     } finally {
       this.controller = null;
     }
