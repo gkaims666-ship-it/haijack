@@ -9,6 +9,21 @@ export const DEFAULT_IGNORE = new Set([
   'target', 'coverage', '.cache', '.turbo', 'vendor', '.dart_tool', 'Pods',
 ]);
 
+/**
+ * Запись файла состояния целиком или никак: сначала во временный файл рядом, затем переименование.
+ * Если программу закрыли или выключили питание посреди записи, прежний файл остаётся целым.
+ */
+export function writeFileAtomic(file, data, options) {
+  const tmp = `${file}.${process.pid}.tmp`;
+  try {
+    fs.writeFileSync(tmp, data, options);
+    fs.renameSync(tmp, file);
+  } catch (err) {
+    try { fs.rmSync(tmp, { force: true }); } catch { /* временного файла могло и не быть */ }
+    throw err;
+  }
+}
+
 /** Приводит путь из аргумента модели к абсолютному. Принимает и "/" и "\". */
 export function resolvePath(cwd, p) {
   if (!p || p === '.') return path.resolve(cwd);
