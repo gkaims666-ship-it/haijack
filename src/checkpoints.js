@@ -6,7 +6,8 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { CONFIG_DIR } from './config.js';
-import { displayPath, writeFileAtomic } from './tools/fsutil.js';
+import { displayPath, writeFileAtomic, isBinaryBuffer } from './tools/fsutil.js';
+import { diffLines } from './tools/diff.js';
 
 // Содержимое файлов хранится отдельно, по хешу (blobs/): одинаковое содержимое разных точек лежит один раз,
 // а размер файла ничем не ограничен. Число точек тоже не ограничено; при желании его задаёт LCC_HISTORY_LIMIT.
@@ -166,6 +167,117 @@ export function undoCheckpoints(cwd, id) {
   collectGarbage(dir);
   for (const f of conflicts) restored.delete(f);
   return { points, restored: [...restored].sort(), conflicts: [...conflicts].sort() };
+}
+
+// ---------- просмотр и выборочное отклонение изменений ----------
+
+const MAX_DIFF_BYTES = 1024 * 1024;
+const CONTEXT = 3;
+
+/** Фрагменты изменений между двумя текстами: у каждого — строки с пометками и границы в общем списке операций */
+function hunksOf(beforeText, afterText) {
+  const ops = diffLines(beforeText.split('\n'), afterText.split('\n'));
+  const hunks = [];
+  let i = 0;
+  while (i < ops.length) {
+    if (ops[i].op === ' ') { i++; continue; }
+    // Изменённые строки, разделённые не более чем двумя контекстами, идут одним фрагментом
+    let end = i;
+    let k = i;
+    while (k < ops.length) {
+      if (ops[k].op !== ' ') { end = k; k++; continue; }
+      let gap = 0;
+      while (k + gap < ops.length && ops[k + gap].op === ' ') gap++;
+      if (k + gap >= ops.length || gap > CONTEXT * 2) break;
+      k += gap;
+    }
+    const from = Math.max(0, i - CONTEXT);
+    const to = Math.min(ops.length, end + 1 + CONTEXT);
+    let oldLine = 1;
+    let newLine = 1;
+    for (let j = 0; j < from; j++) { if (ops[j].op !== '+') oldLine++; if (ops[j].op !== '-') newLine++; }
+    hunks.push({ start: i, end, oldLine, newLine, lines: ops.slice(from, to).map((o) => ({ op: o.op, text: o.line })) });
+    i = end + 1;
+  }
+  return { ops, hunks };
+}
+
+function loadPoint(cwd, id) {
+  const dir = dirFor(cwd);
+  const file = path.join(dir, `${pad(id)}.json`);
+  const data = readJson(file);
+  if (!data || !Array.isArray(data.entries)) throw new Error('Такой контрольной точки нет');
+  if (data.v !== 2) throw new Error('Эта точка сохранена старой версией программы: её можно только откатить целиком');
+  return { dir, file, data };
+}
+
+/**
+ * Изменения одной точки по файлам. Для текстовых файлов — фрагменты; current: совпадает ли файл на диске
+ * с тем, каким его оставила задача (если нет — его меняли позже, и отклонять изменения нельзя).
+ */
+export function checkpointDiff(cwd, id) {
+  const { dir, data } = loadPoint(cwd, id);
+  return data.entries.map((e) => {
+    const before = content(dir, e, 'before', false);
+    const after = content(dir, e, 'after', false);
+    let current = null;
+    try { current = fs.readFileSync(path.resolve(cwd, e.path)); } catch { /* файла нет */ }
+    const untouched = after === null ? current === null : current !== null && hashOf(current) === e.after;
+    const status = before === null ? 'added' : after === null ? 'deleted' : 'modified';
+    const base = { path: e.path, status, current: untouched };
+    const binary = (before && isBinaryBuffer(before)) || (after && isBinaryBuffer(after));
+    if (binary || (before?.length || 0) > MAX_DIFF_BYTES || (after?.length || 0) > MAX_DIFF_BYTES) return { ...base, hunks: null, note: binary ? 'двоичный файл' : 'файл слишком велик для показа по строкам' };
+    const { hunks } = hunksOf(before ? before.toString('utf8') : '', after ? after.toString('utf8') : '');
+    return { ...base, hunks: hunks.map((h, index) => ({ index, oldLine: h.oldLine, newLine: h.newLine, lines: h.lines })) };
+  });
+}
+
+/**
+ * Отклоняет изменение файла, сделанное задачей: целиком или один фрагмент (hunk — его номер).
+ * Файл на диске должен быть таким, каким его оставила задача. Точка обновляется: отклонённого в ней больше нет.
+ * @returns {{path: string, left: number}} left — сколько изменённых файлов осталось в точке
+ */
+export function rejectChange(cwd, id, relPath, hunk = null) {
+  const { dir, file, data } = loadPoint(cwd, id);
+  const entry = data.entries.find((e) => e.path === relPath);
+  if (!entry) throw new Error(`В этой точке нет файла ${relPath}`);
+  const abs = path.resolve(cwd, entry.path);
+  const before = content(dir, entry, 'before', false);
+  const after = content(dir, entry, 'after', false);
+  let current = null;
+  try { current = fs.readFileSync(abs); } catch { /* файла нет */ }
+  const untouched = after === null ? current === null : current !== null && hashOf(current) === entry.after;
+  if (!untouched) throw new Error(`Файл ${relPath} менялся после этой задачи — отклонить её изменения в нём автоматически нельзя`);
+
+  let result = before; // отклонить файл целиком — вернуть состояние «до»
+  if (hunk !== null) {
+    const { ops, hunks } = hunksOf(before ? before.toString('utf8') : '', after ? after.toString('utf8') : '');
+    const target = hunks[hunk];
+    if (!target) throw new Error('Такого фрагмента нет: изменения уже другие, обновите список');
+    const lines = [];
+    ops.forEach((o, i) => {
+      const inside = i >= target.start && i <= target.end;
+      if (o.op === ' ' || (inside ? o.op === '-' : o.op === '+')) lines.push(o.line);
+    });
+    result = Buffer.from(lines.join('\n'), 'utf8');
+    // Отклонён последний оставшийся фрагмент — файл вернулся к исходному состоянию (в том числе «не было»)
+    if (before === null && hunks.length === 1) result = null;
+  }
+  if (result === null) fs.rmSync(abs, { force: true });
+  else { fs.mkdirSync(path.dirname(abs), { recursive: true }); fs.writeFileSync(abs, result); }
+
+  const same = before === null ? result === null : result !== null && before.equals(result);
+  if (same) data.entries = data.entries.filter((e) => e !== entry);
+  else entry.after = result === null ? null : putBlob(dir, result);
+  if (!data.entries.length) removePoint(dir, id);
+  else {
+    writeFileAtomic(file, JSON.stringify(data));
+    const metaFile = path.join(dir, `${pad(id)}.meta.json`);
+    const meta = readJson(metaFile) || {};
+    writeFileAtomic(metaFile, JSON.stringify({ ...meta, files: data.entries.map((e) => e.path).sort() }));
+  }
+  collectGarbage(dir);
+  return { path: relPath, left: data.entries.length };
 }
 
 export function formatCheckpoints(points, now = Date.now(), size = 0) {

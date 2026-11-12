@@ -7,17 +7,19 @@ import { fetchUrl } from './web.js';
 import { githubRead, githubWrite } from './github.js';
 import { updatePlan } from './plan.js';
 import { projectMap, findSymbolTool } from './project.js';
+import { startProcess, processOutput, stopProcessTool } from './background.js';
+import { webSearchTool } from './search.web.js';
 import { mcp } from '../mcp/client.js';
 
-export const ALL_TOOLS = [readFile, listDir, globTool, grepTool, writeFile, editFile, runCommand, fetchUrl, githubRead, githubWrite, updatePlan, projectMap, findSymbolTool];
+export const ALL_TOOLS = [readFile, listDir, globTool, grepTool, writeFile, editFile, runCommand, fetchUrl, githubRead, githubWrite, updatePlan, projectMap, findSymbolTool, startProcess, processOutput, stopProcessTool, webSearchTool];
 const byName = new Map(ALL_TOOLS.map((t) => [t.name, t]));
 
 export const TOOLSETS = {
   // fetch_url есть у всех: он ничего не меняет на диске, но всегда требует подтверждения
-  architect: ['read_file', 'list_dir', 'glob', 'grep', 'find_symbol', 'project_map', 'fetch_url', 'github_read'],
-  reviewer: ['read_file', 'list_dir', 'glob', 'grep', 'find_symbol', 'project_map', 'fetch_url', 'github_read'],
-  coder: ['read_file', 'list_dir', 'glob', 'grep', 'write_file', 'edit_file', 'run_command', 'find_symbol', 'project_map', 'fetch_url', 'github_read', 'github_write', 'update_plan'],
-  executor: ['read_file', 'list_dir', 'glob', 'grep', 'run_command'],
+  architect: ['read_file', 'list_dir', 'glob', 'grep', 'find_symbol', 'project_map', 'web_search', 'fetch_url', 'github_read'],
+  reviewer: ['read_file', 'list_dir', 'glob', 'grep', 'find_symbol', 'project_map', 'web_search', 'fetch_url', 'github_read'],
+  coder: ['read_file', 'list_dir', 'glob', 'grep', 'write_file', 'edit_file', 'run_command', 'start_process', 'process_output', 'stop_process', 'find_symbol', 'project_map', 'web_search', 'fetch_url', 'github_read', 'github_write', 'update_plan'],
+  executor: ['read_file', 'list_dir', 'glob', 'grep', 'run_command', 'start_process', 'process_output', 'stop_process'],
   all: ALL_TOOLS.map((t) => t.name),
 };
 

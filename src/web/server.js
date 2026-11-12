@@ -26,8 +26,9 @@ import { selfStatus } from '../self/improve.js';
 import { mcp, parseMcpConfig, MCP_FILE } from '../mcp/client.js';
 import { githubToken } from '../tools/github.js';
 import { walk } from '../tools/fsutil.js';
+import { stopAllProcesses } from '../tools/background.js';
 import { branchFiles } from '../filestatus.js';
-import { listCheckpoints, undoCheckpoints, historySize } from '../checkpoints.js';
+import { listCheckpoints, undoCheckpoints, historySize, checkpointDiff, rejectChange } from '../checkpoints.js';
 import { selfVersion } from '../self/improve.js';
 
 const MAX_BODY = 12 * 1024 * 1024;
@@ -299,6 +300,7 @@ export async function startWeb({ cfg, mode, port = 0, host = '127.0.0.1', token,
     warmCtl?.abort();
     primeCtl?.abort();
     mcp.stop();
+    stopAllProcesses(); // фоновые процессы агентов не должны пережить программу
     session.abort();
     pull?.controller.abort();
     hub.cancelAsks('no');
@@ -345,7 +347,7 @@ export async function startWeb({ cfg, mode, port = 0, host = '127.0.0.1', token,
     let outcome;
     try {
       // /self status, undo и reset — управление версиями, а не задача для модели
-      const isTask = !/^[/!]/.test(text.trim()) || /^\/loop\s+\S/i.test(text.trim()) || /^\/self\s+(?!(status|undo|reset)\s*$)\S/i.test(text.trim());
+      const isTask = !/^[/!]/.test(text.trim()) || /^\/(loop|parallel)\s+\S/i.test(text.trim()) || /^\/self\s+(?!(status|undo|reset)\s*$)\S/i.test(text.trim());
       if (isTask && !hasCredentials(cfg)) {
         ui.warn('Сначала настройте доступ к модели: откройте настройки.');
         return;
@@ -377,6 +379,7 @@ export async function startWeb({ cfg, mode, port = 0, host = '127.0.0.1', token,
     local: { baseUrl: cfg.local.baseUrl, hasKey: Boolean(cfg.local.apiKey), numCtx: cfg.local.numCtx, temperature: cfg.local.temperature, think: cfg.local.think === 'off' ? 'off' : 'on' },
     instructions: readInstructions(),
     github: { hasToken: Boolean(githubToken()) },
+    searchUrl: process.env.LCC_SEARCH_URL || '',
     mcp: { config: (() => { try { return fs.readFileSync(MCP_FILE, 'utf8'); } catch { return ''; } })(), file: MCP_FILE, servers: mcp.status() },
     effort: cfg.effort,
     maxCycles: cfg.maxCycles,
@@ -414,6 +417,11 @@ export async function startWeb({ cfg, mode, port = 0, host = '127.0.0.1', token,
       const n = Number(body.numCtx);
       if (!Number.isInteger(n) || n < 2048 || n > 1048576) throw new Error('Размер контекста — целое число от 2048 до 1048576');
       updates.LCC_LOCAL_NUM_CTX = String(n);
+    }
+    if (body.searchUrl !== undefined) {
+      const search = String(body.searchUrl).trim();
+      if (search && !isHttpUrl(search)) throw new Error('Адрес поисковика должен начинаться с http:// или https://');
+      updates.LCC_SEARCH_URL = search;
     }
     if (body.temperature !== undefined) {
       const n = Number(body.temperature);
@@ -534,6 +542,9 @@ export async function startWeb({ cfg, mode, port = 0, host = '127.0.0.1', token,
             return send(res, 200, { servers: mcp.status() });
           case '/api/checkpoints':
             return send(res, 200, { points: listCheckpoints(cfg.cwd), bytes: historySize(cfg.cwd), app: selfVersion() });
+          case '/api/checkpoints/diff':
+            // Изменения одной задачи по файлам и фрагментам — для выборочного отклонения
+            return send(res, 200, { files: checkpointDiff(cfg.cwd, Number(url.searchParams.get('id'))) });
           case '/api/branch':
             return send(res, 200, branchFiles(cfg.cwd));
           case '/api/files': {
@@ -595,10 +606,32 @@ export async function startWeb({ cfg, mode, port = 0, host = '127.0.0.1', token,
           handleInput(text, images); // не ждём: результат придёт событиями
           return send(res, 202, { ok: true });
         }
+        case '/api/mcp/login': {
+          // Вход на сервер через браузер: страница открывает полученный адрес, сервер подключится сам
+          const flow = await mcp.login(String(body.name ?? ''));
+          flow.done.then(pushState, pushState);
+          return send(res, 200, { url: flow.url });
+        }
+        case '/api/mcp/logout':
+          await mcp.logout(String(body.name ?? ''));
+          return send(res, 200, { servers: mcp.status() });
         case '/api/mcp/trust':
           // Сервер, описанный в файлах проекта, запускается только после явного разрешения
           await mcp.trust(String(body.name ?? ''));
           return send(res, 200, { servers: mcp.status() });
+        case '/api/checkpoints/reject': {
+          // Отклонить изменение одного файла или одного фрагмента, оставив остальное
+          if (running) return send(res, 409, { error: 'Дождитесь окончания текущей задачи или остановите её.' });
+          const id = Number(body.id);
+          const hunk = body.hunk === undefined || body.hunk === null ? null : Number(body.hunk);
+          if (!Number.isInteger(id) || typeof body.path !== 'string' || (hunk !== null && !Number.isInteger(hunk))) return send(res, 400, { error: 'Нужны номер точки и путь к файлу' });
+          const done = rejectChange(cfg.cwd, id, body.path, hunk);
+          orchestrator.changes.clear();
+          for (const a of Object.values(orchestrator.agents)) a.reset(); // агенты помнят отклонённые версии файлов
+          hub.emit({ t: 'msg', level: 'ok', text: hunk === null ? `Изменения в ${done.path} отклонены.` : `Фрагмент в ${done.path} отклонён.` });
+          primeSoon();
+          return send(res, 200, { ...done, files: done.left ? checkpointDiff(cfg.cwd, id) : [] });
+        }
         case '/api/checkpoints/undo': {
           // Откат точки и всех более новых: подтверждение пользователь дал в окне
           if (running) return send(res, 409, { error: 'Дождитесь окончания текущей задачи или остановите её.' });

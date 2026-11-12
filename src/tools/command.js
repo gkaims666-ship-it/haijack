@@ -25,7 +25,7 @@ export function isDangerous(cmd) {
   return DANGEROUS.some((re) => re.test(cmd));
 }
 
-function killTree(child) {
+export function killTree(child) {
   if (!child.pid) return;
   try {
     if (isWindows) {

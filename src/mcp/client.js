@@ -12,6 +12,7 @@ import { CONFIG_DIR } from '../config.js';
 import { parseSSE } from '../api/anthropic.js';
 import { VERSION } from '../version.js';
 import { spawnSpec } from '../platform.js';
+import { accessToken, beginLogin, forgetAuth } from './oauth.js';
 
 export const MCP_FILE = path.join(CONFIG_DIR, 'mcp.json');
 const TRUST_FILE = path.join(CONFIG_DIR, 'mcp-trust.json');
@@ -111,8 +112,13 @@ class HttpTransport {
     this.version = '';
   }
 
-  async #post(msg) {
+  async #post(msg, { refresh = false } = {}) {
     const headers = { 'content-type': 'application/json', accept: 'application/json, text/event-stream', ...this.headers };
+    // Токен, полученный входом через браузер; заголовок из настроек сервера имеет приоритет
+    if (!Object.keys(this.headers).some((k) => k.toLowerCase() === 'authorization')) {
+      const token = await accessToken(this.url, { force: refresh });
+      if (token) headers.authorization = `Bearer ${token}`;
+    }
     if (this.session) headers['mcp-session-id'] = this.session;
     if (this.version) headers['mcp-protocol-version'] = this.version;
     const res = await fetch(this.url, { method: 'POST', headers, body: JSON.stringify(msg) });
@@ -123,8 +129,19 @@ class HttpTransport {
 
   async request(method, params) {
     const id = this.nextId++;
-    const res = await this.#post({ jsonrpc: '2.0', id, method, params });
-    if (!res.ok) throw new Error(`HTTP ${res.status}${res.status === 401 || res.status === 403 ? ' — нужен ключ доступа (headers в настройках сервера)' : ''}`);
+    let res = await this.#post({ jsonrpc: '2.0', id, method, params });
+    if (res.status === 401) {
+      // Токен мог истечь: одна попытка продлить его; если не вышло — нужен вход через браузер
+      await res.body?.cancel().catch(() => {});
+      res = await this.#post({ jsonrpc: '2.0', id, method, params }, { refresh: true });
+      if (res.status === 401) {
+        const err = new Error('нужен вход');
+        err.authRequired = true;
+        err.wwwAuth = res.headers.get('www-authenticate') || '';
+        throw err;
+      }
+    }
+    if (!res.ok) throw new Error(`HTTP ${res.status}${res.status === 403 ? ' — доступ запрещён: у учётной записи нет прав на этот сервер' : ''}`);
     const done = (msg) => {
       if (msg.error) throw new Error(msg.error.message || JSON.stringify(msg.error));
       return msg.result;
@@ -268,9 +285,46 @@ export class McpManager {
     } catch (err) {
       transport?.close();
       entry.transport = null;
+      if (err.authRequired) {
+        // Сервер требует входа через браузер: ждём, пока пользователь войдёт (кнопка «Войти» в настройках)
+        entry.state = 'auth';
+        entry.error = '';
+        entry.wwwAuth = err.wwwAuth;
+        return;
+      }
       entry.state = 'error';
       entry.error = err.message;
     }
+  }
+
+  /**
+   * Начинает вход на сервер через браузер. Возвращает адрес страницы входа; когда пользователь войдёт,
+   * сервер подключается сам.
+   */
+  async login(name) {
+    const entry = this.servers.get(name);
+    if (!entry || !entry.def.url) throw new Error(`Сервер ${name} не найден или не требует входа`);
+    entry.login?.cancel();
+    const flow = await beginLogin(entry.def.url, entry.wwwAuth || '');
+    entry.login = flow;
+    const generation = this.generation;
+    flow.done.then(async () => {
+      entry.login = null;
+      if (generation === this.generation) await this.#connect(entry, generation);
+    }, (err) => {
+      entry.login = null;
+      if (generation === this.generation && entry.state === 'auth') entry.error = `Вход не удался: ${err.message}`;
+    });
+    return { url: flow.url, done: flow.done };
+  }
+
+  /** Забывает сохранённый вход на сервер */
+  async logout(name) {
+    const entry = this.servers.get(name);
+    if (!entry || !entry.def.url) throw new Error(`Сервер ${name} не найден`);
+    forgetAuth(entry.def.url);
+    entry.transport?.close();
+    await this.#connect(entry, this.generation);
   }
 
   #wrap(entry, t) {
@@ -314,7 +368,7 @@ export class McpManager {
 
   stop() {
     this.generation++;
-    for (const s of this.servers.values()) s.transport?.close();
+    for (const s of this.servers.values()) { s.transport?.close(); s.login?.cancel(); }
     this.servers.clear();
   }
 }
