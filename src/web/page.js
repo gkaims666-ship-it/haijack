@@ -1008,7 +1008,7 @@ textarea.input { padding: 10px 14px; min-height: 96px; resize: vertical; line-he
     $('auto').setAttribute('aria-pressed', ev.autoApprove ? 'true' : 'false');
     $('target').setAttribute('aria-pressed', ev.target === 'self' ? 'true' : 'false');
     var parts = String(ev.cwd || '').split(/[\\/]/).filter(Boolean);
-    $('project').textContent = ev.target === 'self' ? 'код приложения' : (parts.length > 2 ? '…/' : '') + parts.slice(-2).join('/');
+    $('project').textContent = ev.target === 'self' ? 'код приложения' : (parts.length > 2 ? '…/' : '') + parts.slice(-2).join('/') + (ev.branch ? ' · ' + ev.branch : '');
     $('project').title = ev.cwd || '';
     $('send').hidden = !!ev.busy; $('stop').hidden = !ev.busy;
     $('mode').disabled = !!ev.busy;
@@ -1057,7 +1057,14 @@ textarea.input { padding: 10px 14px; min-height: 96px; resize: vertical; line-he
       diff.onclick = function () { sendText('/diff'); };
       var undo = el('button', 'btn small quiet', 'Откатить'); undo.type = 'button';
       undo.onclick = function () { sendText('/undo'); };
-      acts.appendChild(diff); acts.appendChild(undo); box.appendChild(acts);
+      acts.appendChild(diff); acts.appendChild(undo);
+      if (state.branch) {
+        // Проект под git: изменения задачи можно сразу закоммитить, сообщение напишет модель
+        var save = el('button', 'btn small quiet', 'Коммит'); save.type = 'button';
+        save.onclick = function () { sendText('/commit'); };
+        acts.appendChild(save);
+      }
+      box.appendChild(acts);
     }
     add(box);
   }
@@ -1307,7 +1314,7 @@ textarea.input { padding: 10px 14px; min-height: 96px; resize: vertical; line-he
     ['/help', 'все команды'], ['/diff', 'показать изменения последней задачи'], ['/undo', 'откатить изменения последней задачи'],
     ['/retry', 'выполнить последнюю задачу заново'], ['/clear', 'очистить диалог, сохранив опыт в память'],
     ['/doctor', 'проверить, всё ли готово к работе'], ['/memory', 'что программа помнит'], ['/journal', 'последние задачи и их результаты'], ['/status', 'среда и настройки'],
-    ['/cost', 'расход токенов за сессию'], ['/cd ', 'сменить папку проекта'], ['/open', 'открыть проект в Cursor или VS Code'], ['/mcp', 'подключённые серверы инструментов'], ['/loop ', 'повторять задачу до остановки'],
+    ['/commit', 'закоммитить изменения; сообщение напишет модель'], ['/cost', 'расход токенов за сессию'], ['/cd ', 'сменить папку проекта'], ['/open', 'открыть проект в Cursor или VS Code'], ['/mcp', 'подключённые серверы инструментов'], ['/loop ', 'повторять задачу до остановки'],
     ['/self ', 'улучшить само приложение'], ['/pull ', 'скачать модель на сервер Ollama'], ['/mode ', 'режим: auto, plan или solo'],
     ['/yes', 'не спрашивать перед записью файлов и командами']
   ];
