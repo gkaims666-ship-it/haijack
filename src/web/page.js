@@ -301,7 +301,15 @@ button.cat-item:hover { padding-left: 8px; }
 .point small { color: var(--faint); font-size: 12.5px; }
 .point b { font-weight: 560; overflow-wrap: anywhere; }
 .point .files { color: var(--muted); font: 12.5px/1.5 var(--mono); overflow-wrap: anywhere; }
-.point .btn { justify-self: start; margin-top: 6px; }
+.point .prow { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+.sheet.wide { width: min(100%, 760px); }
+.rfile { padding: 14px 0 16px; border-bottom: 1px solid var(--line); }
+.rhead { display: flex; align-items: baseline; flex-wrap: wrap; gap: 10px; margin-bottom: 6px; }
+.rhead b { font: 13.5px/1.45 var(--mono); font-weight: 600; overflow-wrap: anywhere; }
+.rhead small { color: var(--faint); font-size: 12.5px; flex: 1; }
+.rhunk { margin: 8px 0 0; padding: 10px 12px; background: #0A0E14; border: 1px solid var(--line); border-radius: 12px; font: 12.5px/1.55 var(--mono); overflow-x: auto; white-space: pre; }
+.rhunk .add { color: var(--add); } .rhunk .del { color: var(--del); } .rhunk .hunk { color: var(--faint); }
+.rreject { display: inline-block; margin-top: 4px; }
 /* Файлы ветки: окантовка по состоянию — зелёная «готов», красная «не готов», жёлтая «под вопросом» */
 .fstat { display: block; width: 100%; text-align: left; padding: 10px 13px; margin-top: 8px; border-radius: 12px; border: 1.5px solid var(--line-strong); transition: background .14s; }
 .fstat:hover { background: var(--raised); }
@@ -525,6 +533,8 @@ textarea.input { padding: 10px 14px; min-height: 96px; resize: vertical; line-he
     <h3>Связи с другими средами</h3>
     <label class="field"><span>Токен GitHub</span><input class="input" id="s-gh" type="password" autocomplete="off" spellcheck="false">
       <small>С ним агенты читают и создают задачи, запросы на слияние и комментарии. Хранится только на этом устройстве. Создать: github.com → Settings → Developer settings → Personal access tokens.</small></label>
+    <label class="field"><span>Поиск в интернете</span><input class="input" id="s-search" autocomplete="off" spellcheck="false" placeholder="по умолчанию — DuckDuckGo">
+      <small>Агенты ищут документацию и описания ошибок, когда есть сеть. Свой поисковик: адрес с {q} на месте запроса, например адрес SearXNG с format=json.</small></label>
     <label class="field"><span>Серверы инструментов (MCP)</span><textarea class="input" id="s-mcp" rows="6" spellcheck="false" style="font:12.5px/1.5 var(--mono)" placeholder='{ "mcpServers": { "имя": { "command": "npx", "args": ["-y", "пакет-сервера"] } } }'></textarea>
       <small>Тот же формат, что в Claude Code и Cursor: можно вставить готовые настройки оттуда. Инструменты серверов получают агенты; действия, которые что-то меняют, спрашивают разрешение.</small></label>
     <div class="cat-list" id="s-mcp-list"></div>
@@ -564,6 +574,14 @@ textarea.input { padding: 10px 14px; min-height: 96px; resize: vertical; line-he
     <pre class="block" id="m-journal"></pre>
   </div>
   <div class="sheet-foot"><button class="btn small" id="m-forget">Стереть память</button></div>
+</aside>
+
+<aside class="sheet wide" id="review" hidden aria-labelledby="review-title">
+  <div class="sheet-head"><h2 id="review-title">Изменения задачи</h2><button class="icon-btn" data-close aria-label="Закрыть"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg></button></div>
+  <div class="sheet-body">
+    <p class="note" id="review-head" style="margin-top:0"></p>
+    <div id="review-list"></div>
+  </div>
 </aside>
 
 <aside class="sheet" id="history" hidden aria-labelledby="history-title">
@@ -938,6 +956,7 @@ textarea.input { padding: 10px 14px; min-height: 96px; resize: vertical; line-he
     var parts = [];
     if (state.numCtx && lastInput) parts.push('Контекст занят на ' + Math.min(100, Math.round(100 * lastInput / state.numCtx)) + '%');
     var t = state.tokens;
+    if (state.processes) parts.push('фоновых процессов: ' + state.processes + ' (/ps)');
     if (t && (t.input || t.output)) parts.push('за сессию: вход ' + t.input.toLocaleString('ru') + ', выход ' + t.output.toLocaleString('ru') + ' токенов');
     $('tokens').textContent = parts.join(' · ');
   }
@@ -1094,6 +1113,9 @@ textarea.input { padding: 10px 14px; min-height: 96px; resize: vertical; line-he
       var undo = el('button', 'btn small quiet', 'Откатить'); undo.type = 'button';
       undo.onclick = function () { sendText('/undo'); };
       acts.appendChild(diff); acts.appendChild(undo);
+      var review = el('button', 'btn small quiet', 'Просмотр по частям'); review.type = 'button';
+      review.onclick = reviewLatest;
+      acts.appendChild(review);
       if (state.branch) {
         // Проект под git: изменения задачи можно сразу закоммитить, сообщение напишет модель
         var save = el('button', 'btn small quiet', 'Коммит'); save.type = 'button';
@@ -1347,10 +1369,10 @@ textarea.input { padding: 10px 14px; min-height: 96px; resize: vertical; line-he
   }
   // Подсказка команд: появляется, когда строка начинается с «/»
   var COMMANDS = [
-    ['/help', 'все команды'], ['/diff', 'показать изменения последней задачи'], ['/undo', 'откатить изменения последней задачи'], ['/history', 'история изменений и откат на любой шаг'],
+    ['/help', 'все команды'], ['/diff', 'показать изменения последней задачи'], ['/undo', 'откатить изменения последней задачи'], ['/history', 'история изменений и откат на любой шаг'], ['/reject ', 'отклонить изменения последней задачи в одном файле'],
     ['/retry', 'выполнить последнюю задачу заново'], ['/clear', 'очистить диалог, сохранив опыт в память'],
     ['/doctor', 'проверить, всё ли готово к работе'], ['/memory', 'что программа помнит'], ['/journal', 'последние задачи и их результаты'], ['/status', 'среда и настройки'],
-    ['/commit', 'закоммитить изменения; сообщение напишет модель'], ['/files', 'файлы ветки: готовые, неготовые, под вопросом'], ['/cost', 'расход токенов за сессию'], ['/cd ', 'сменить папку проекта'], ['/open', 'открыть проект в Cursor или VS Code'], ['/mcp', 'подключённые серверы инструментов'], ['/loop ', 'повторять задачу до остановки'],
+    ['/commit', 'закоммитить изменения; сообщение напишет модель'], ['/files', 'файлы ветки: готовые, неготовые, под вопросом'], ['/cost', 'расход токенов за сессию'], ['/cd ', 'сменить папку проекта'], ['/open', 'открыть проект в Cursor или VS Code'], ['/mcp', 'подключённые серверы инструментов'], ['/ps', 'фоновые процессы агентов'], ['/kill ', 'остановить фоновый процесс'], ['/loop ', 'повторять задачу до остановки'], ['/parallel ', 'несколько независимых задач одновременно: задача 1 || задача 2'],
     ['/self ', 'улучшить само приложение'], ['/pull ', 'скачать модель на сервер Ollama'], ['/mode ', 'режим: auto, plan или solo'],
     ['/yes', 'не спрашивать перед записью файлов и командами']
   ];
@@ -1794,6 +1816,7 @@ textarea.input { padding: 10px 14px; min-height: 96px; resize: vertical; line-he
       $('s-think').value = s.local.think === 'on' ? 'on' : 'off';
       $('s-gh').value = ''; $('s-gh').placeholder = s.github && s.github.hasToken ? 'сохранён — введите новый, чтобы заменить' : 'ghp_… или github_pat_…';
       $('s-mcp').value = s.mcp ? s.mcp.config : '';
+      $('s-search').value = s.searchUrl || '';
       drawMcp(s.mcp ? s.mcp.servers : []);
       $('s-temp').value = s.local.temperature;
       $('s-instr').value = s.instructions || '';
@@ -1831,6 +1854,7 @@ textarea.input { padding: 10px 14px; min-height: 96px; resize: vertical; line-he
     if (!settings.isAndroidApp) body.lan = $('s-lan').checked;
     body.instructions = $('s-instr').value;
     if ($('s-gh').value.trim()) body.githubToken = $('s-gh').value.trim();
+    if ($('s-search').value.trim() !== String(settings.searchUrl || '')) body.searchUrl = $('s-search').value.trim();
     if (settings.mcp && $('s-mcp').value.trim() !== String(settings.mcp.config || '').trim()) body.mcpConfig = $('s-mcp').value;
     if (local) {
       body.localUrl = $('s-local').value.trim(); body.model = $('s-model-l').value; body.numCtx = Number($('s-ctx').value);
@@ -1873,6 +1897,50 @@ textarea.input { padding: 10px 14px; min-height: 96px; resize: vertical; line-he
     confirmBox('Очистить диалог?', 'Переписка исчезнет с экрана, а агенты начнут с чистого листа — так программа тратит меньше ресурсов. Накопленный опыт перед этим сохранится в памяти.', 'Очистить', function () { sendText('/clear'); });
   };
 
+  // ---------- просмотр изменений задачи: принять всё или отклонить файл либо фрагмент ----------
+  var reviewId = 0;
+  function drawReview(files) {
+    var list = $('review-list');
+    list.textContent = '';
+    $('review-head').textContent = files.length
+      ? 'Всё, что вы не отклонили, остаётся в проекте. Отклонить можно файл целиком или отдельный фрагмент.'
+      : 'В этой задаче не осталось изменений.';
+    files.forEach(function (f) {
+      var box = el('div', 'rfile');
+      var head = el('div', 'rhead');
+      head.appendChild(el('b', '', f.path));
+      head.appendChild(el('small', '', f.status === 'added' ? 'новый файл' : f.status === 'deleted' ? 'удалён' : 'изменён'));
+      if (f.current) head.appendChild(mini('Отклонить файл', function () { reject(f.path, null); }));
+      box.appendChild(head);
+      if (!f.current) box.appendChild(el('p', 'note', 'Файл менялся после этой задачи — отклонить её изменения в нём автоматически нельзя.'));
+      if (!f.hunks) box.appendChild(el('p', 'note', f.note || 'Содержимое не показывается.'));
+      (f.hunks || []).forEach(function (h) {
+        var pre = el('pre', 'rhunk');
+        pre.appendChild(el('span', 'hunk', '@@ строка ' + h.newLine + ' @@\n'));
+        h.lines.forEach(function (l) { pre.appendChild(el('span', l.op === '+' ? 'add' : l.op === '-' ? 'del' : '', l.op + l.text + '\n')); });
+        box.appendChild(pre);
+        if (f.current && f.hunks.length > 1) {
+          var b = mini('Отклонить этот фрагмент', function () { reject(f.path, h.index); });
+          b.className = 'mini rreject';
+          box.appendChild(b);
+        }
+      });
+      list.appendChild(box);
+    });
+  }
+  function reject(file, hunk) {
+    if (state.busy) { note('warn', 'Дождитесь окончания текущей задачи или остановите её.'); return; }
+    api('POST', '/api/checkpoints/reject', { id: reviewId, path: file, hunk: hunk }).then(function (r) { drawReview(r.files); }, function (e) { showError($('review-head'), e.message); });
+  }
+  function openReview(id) {
+    reviewId = id;
+    api('GET', '/api/checkpoints/diff?id=' + id).then(function (r) { drawReview(r.files); show($('review')); }, function (e) { note('error', e.message); });
+  }
+  // Просмотр изменений последней задачи — из её итога в чате
+  function reviewLatest() {
+    api('GET', '/api/checkpoints').then(function (r) { if (r.points.length) openReview(r.points[0].id); else note('info', 'Изменений для просмотра нет.'); }, function (e) { note('error', e.message); });
+  }
+
   // ---------- история изменений: контрольные точки задач ----------
   function ago(time) {
     var min = Math.round((Date.now() - time) / 60000);
@@ -1900,6 +1968,8 @@ textarea.input { padding: 10px 14px; min-height: 96px; resize: vertical; line-he
       box.appendChild(el('small', '', '#' + p.id + ' · ' + ago(p.time) + ' · ' + plural(p.files.length, 'файл', 'файла', 'файлов')));
       box.appendChild(el('b', '', p.task || '(без описания)'));
       box.appendChild(el('span', 'files', p.files.slice(0, 8).join(', ') + (p.files.length > 8 ? ', +' + (p.files.length - 8) : '')));
+      var look = el('button', 'btn small quiet', 'Просмотреть и отклонить по частям'); look.type = 'button';
+      look.onclick = function () { closeSheet(); openReview(p.id); };
       var undo = el('button', 'btn small', i === 0 ? 'Откатить эту задачу' : 'Откатить до этого места (' + plural(i + 1, 'задача', 'задачи', 'задач') + ')'); undo.type = 'button';
       undo.onclick = function () {
         confirmBox('Откатить изменения?', i === 0
@@ -1908,7 +1978,8 @@ textarea.input { padding: 10px 14px; min-height: 96px; resize: vertical; line-he
           api('POST', '/api/checkpoints/undo', { id: p.id }).then(function () { closeSheet(); }, function (e) { closeSheet(); note('error', e.message); });
         });
       };
-      box.appendChild(undo);
+      var row = el('div', 'prow'); row.appendChild(undo); row.appendChild(look);
+      box.appendChild(row);
       list.appendChild(box);
     });
   }
@@ -1952,9 +2023,28 @@ textarea.input { padding: 10px 14px; min-height: 96px; resize: vertical; line-he
       var name = el('span', 'id', m.name);
       var text = m.state === 'ready' ? plural(m.tools.length, 'инструмент', 'инструмента', 'инструментов')
         : m.state === 'blocked' ? 'описан в проекте (' + m.source + ') — запустится после разрешения: ' + m.target
+        : m.state === 'auth' ? 'нужен вход через браузер' + (m.error ? ' — ' + m.error : '')
         : m.state === 'error' ? 'не запустился: ' + m.error : 'запускается…';
       var sub = el('small', '', text); sub.style.cssText = 'display:block;font-family:var(--sans);color:var(--' + (m.state === 'error' ? 'error' : m.state === 'ready' ? 'ok' : 'faint') + ')';
       name.appendChild(sub); row.appendChild(name);
+      if (m.state === 'auth') {
+        var enter = el('button', 'btn small', 'Войти'); enter.type = 'button';
+        enter.onclick = function () {
+          enter.disabled = true; enter.textContent = 'Жду входа…';
+          api('POST', '/api/mcp/login', { name: m.name }).then(function (r) {
+            window.open(r.url, '_blank', 'noopener');
+            // Страница входа открыта в браузере; когда вход завершится, сервер подключится — обновляем список
+            var tries = 0, timer = setInterval(function () {
+              if (++tries > 150 || $('settings').hidden) { clearInterval(timer); return; }
+              api('GET', '/api/mcp').then(function (s) {
+                var now = s.servers.filter(function (x) { return x.name === m.name; })[0];
+                if (!now || now.state !== 'auth' || now.error) { clearInterval(timer); drawMcp(s.servers); }
+              }, function () {});
+            }, 2000);
+          }, function (e) { enter.disabled = false; enter.textContent = 'Войти'; showError($('s-error'), e.message); });
+        };
+        row.appendChild(enter);
+      }
       if (m.state === 'blocked') {
         var allow = el('button', 'btn small', 'Разрешить'); allow.type = 'button';
         allow.onclick = function () {

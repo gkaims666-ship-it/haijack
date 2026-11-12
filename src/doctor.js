@@ -66,6 +66,7 @@ export async function diagnose(cfg, signal) {
   const servers = mcp.status();
   for (const s of servers) {
     if (s.state === 'ready') ok(`Сервер инструментов ${s.name}: работает, инструментов: ${s.tools.length}`);
+    else if (s.state === 'auth') warn(`Сервер инструментов ${s.name} ждёт входа через браузер`, 'настройки → «Связи с другими средами» → «Войти»');
     else if (s.state === 'blocked') warn(`Сервер инструментов ${s.name} описан в проекте и ждёт разрешения`, 'настройки → «Связи с другими средами» → «Разрешить»');
     else if (s.state === 'error') bad(`Сервер инструментов ${s.name} не запустился: ${s.error}`, 'проверьте команду запуска в настройках, раздел «Связи с другими средами»');
   }
