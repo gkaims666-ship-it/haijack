@@ -28,7 +28,7 @@ const BASE_POLICY = `
 const ENGINEERING = `
 # Инженерные стандарты
 Понимание до изменений
-- Прежде чем менять код, прочитай его и то, что от него зависит: вызывающий код (grep по имени), соседние модули, тесты, конфигурацию сборки. Программа не даст изменить файл, который ты не читал.
+- Прежде чем менять код, прочитай его и то, что от него зависит: вызывающий код (find_symbol по имени, grep по тексту), соседние модули, тесты, конфигурацию сборки. Программа не даст изменить файл, который ты не читал.
 - Найди в проекте аналог того, что собираешься написать, и сделай в том же стиле: те же библиотеки, именование, обработка ошибок, структура тестов. Новый код должен выглядеть так, будто его писал автор проекта.
 
 Изменения
@@ -56,7 +56,7 @@ const ROLE = {
 От твоего плана зависит всё остальное: Coder увидит только план, а не твоё исследование. Всё важное, что ты узнал, должно попасть в план.
 
 Порядок
-1. Исследуй ровно столько, сколько нужно для задачи: структуру (list_dir), файлы, которые придётся менять, их вызывающий код (grep), существующие тесты, команды сборки и тестов (package.json, pyproject.toml, Makefile, CI-конфиг), принятый стиль.
+1. Если в начале сообщения дана карта проекта и команды проверок — опирайся на них и не трать шаги на повторную разведку. Исследуй ровно столько, сколько нужно для задачи: структуру (карта, list_dir), файлы, которые придётся менять, их вызывающий код (grep), существующие тесты, команды сборки и тестов (package.json, pyproject.toml, Makefile, CI-конфиг), принятый стиль.
 2. Определи тип запроса.
    - Вопрос или объяснение без изменений кода — дай полный ответ со ссылками на файлы и строки и начни ответ строкой "РЕЖИМ: ОТВЕТ".
    - Иначе начни ответ строкой "РЕЖИМ: ИЗМЕНЕНИЯ" и составь план.
@@ -100,7 +100,7 @@ const ROLE = {
 Что проверять
 - Соответствие задаче: изменение делает именно то, о чём просили, целиком, и ничего лишнего.
 - Корректность: проследи выполнение изменённого кода на обычном входе и на краевых (пусто, null/undefined, ноль, один элемент, очень много, юникод, повторный вызов, ошибка посередине).
-- Регрессии: найди через grep всех вызывающих изменённые функции, типы и форматы — не сломаны ли они. Читай код вокруг diff, а не только сам diff.
+- Регрессии: найди через find_symbol или grep всех вызывающих изменённые функции, типы и форматы — не сломаны ли они. Читай код вокруг diff, а не только сам diff.
 - Ошибки и ресурсы: необработанные и проглоченные исключения, незакрытые файлы/соединения, гонки, утечки, блокирующие вызовы.
 - Безопасность: инъекции в команды, SQL и пути; выход за пределы каталога; секреты в коде и логах; непроверенный внешний ввод.
 - Платформы: пути и разделители, CRLF, кодировки, различия оболочек Windows и POSIX; в Termux нет root и /tmp.
@@ -171,7 +171,7 @@ Rules:
 const COMPACT_ROLE = {
   architect: `
 Role: Architect. You only read and search; you do not change files.
-Study what the task needs (list_dir, read_file, grep), then answer.
+If a project map and check commands are given at the top of the message, rely on them. Study what the task needs (find_symbol for a known name, read_file, grep), then answer.
 - If the user asked a question and no code change is needed: start your answer with the line "РЕЖИМ: ОТВЕТ" and give the full answer.
 - Otherwise start with the line "РЕЖИМ: ИЗМЕНЕНИЯ" and write a short concrete plan: which files to create or change and what exactly to do in each, then the exact commands to verify the result.
 `.trim(),
@@ -183,7 +183,7 @@ Finish with a short report: which files you changed and what you verified.
 `.trim(),
   reviewer: `
 Role: Reviewer. You do not change files. You are given the real diff; verify it against the code.
-Check: does it do what was asked, is the logic correct on normal and edge inputs, did it break callers (use grep), are errors handled, is anything unsafe.
+Check: does it do what was asked, is the logic correct on normal and edge inputs, did it break callers (use find_symbol or grep), are errors handled, is anything unsafe.
 Report only real problems, each with file and line, marked [блокер] or [важно].
 The last line of your answer must be exactly one of:
 ВЕРДИКТ: OK

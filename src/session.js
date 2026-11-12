@@ -9,6 +9,7 @@ import { resolvePath } from './tools/fsutil.js';
 import { platformInfo, spawnSpec } from './platform.js';
 import { diagnose } from './doctor.js';
 import { branchFiles, formatBranchFiles } from './filestatus.js';
+import { listCheckpoints, undoCheckpoints, formatCheckpoints } from './checkpoints.js';
 import { VERSION } from './version.js';
 import { CONFIG_DIR } from './config.js';
 import { formatJournal } from './memory.js';
@@ -57,7 +58,8 @@ export const HELP = `
 
 Изменения:
   /diff                   показать изменения последней задачи
-  /undo                   откатить изменения последней задачи
+  /undo [#N]              откатить последнюю задачу; с номером — точку N и все более новые
+  /history                история изменений: контрольные точки задач
   /self status|undo|reset версия приложения, откат доработки, возврат к заводской версии
 
 Память и журнал:
@@ -194,6 +196,15 @@ export class Session {
   }
 
   async #projectTask(text, signal) {
+    try {
+      return await this.#runProjectTask(text, signal);
+    } finally {
+      // Контрольная точка — после любой задачи, даже прерванной: её изменения тоже можно будет откатить
+      this.orchestrator.checkpoint(text);
+    }
+  }
+
+  async #runProjectTask(text, signal) {
     const { ui, orchestrator } = this;
     if (this.mode === 'solo') return { kind: 'solo', done: true, text: await orchestrator.solo(text, signal) };
     let presetPlan;
@@ -395,14 +406,31 @@ export class Session {
         if (d) ui.print(d); else ui.info('В последней задаче изменений нет.');
         break;
       }
+      case 'history': case 'checkpoints':
+        ui.print(formatCheckpoints(listCheckpoints(cfg.cwd)));
+        break;
       case 'undo': {
-        const files = this.orchestrator.changes.files();
-        if (!files.length) { ui.info('Откатывать нечего.'); break; }
-        if (!(await ui.confirm(`Вернуть к состоянию до задачи: ${files.join(', ')}?`))) { ui.info('Отменено.'); break; }
-        const restored = this.orchestrator.changes.undo();
+        // Изменения незавершённой задачи, для которых точка ещё не сохранена, сначала сохраняются
+        this.orchestrator.checkpoint?.(this.lastTask || 'незавершённая задача');
+        const points = listCheckpoints(cfg.cwd);
+        if (!points.length) { ui.info('Откатывать нечего.'); break; }
+        let from = points[0].id;
+        if (arg) {
+          const n = Number(arg.replace(/^#/, ''));
+          if (!Number.isInteger(n) || !points.some((p) => p.id === n)) { ui.warn(`Точки ${arg} нет. Список: /history`); break; }
+          from = n;
+        }
+        const affected = points.filter((p) => p.id >= from);
+        const files = [...new Set(affected.flatMap((p) => p.files))].sort();
+        const what = affected.length === 1 ? `Вернуть к состоянию до задачи «${affected[0].task.slice(0, 80)}»` : `Откатить задач: ${affected.length} (точки #${from}–#${points[0].id})`;
+        if (!(await ui.confirm(`${what}? Файлы: ${files.slice(0, 12).join(', ')}${files.length > 12 ? ` и ещё ${files.length - 12}` : ''}`))) { ui.info('Отменено.'); break; }
+        const res = undoCheckpoints(cfg.cwd, from);
+        this.orchestrator.changes.clear();
         // Агенты помнят изменённые версии файлов — после отката их память недостоверна
         for (const a of Object.values(this.orchestrator.agents)) a.reset();
-        ui.info(`Восстановлено: ${restored.join(', ')}`);
+        if (res.restored.length) ui.info(`Восстановлено: ${res.restored.join(', ')}`);
+        if (res.conflicts.length) ui.warn(`Не тронуты, потому что менялись после задачи: ${res.conflicts.join(', ')}. Верните их вручную или через git.`);
+        if (!res.restored.length && !res.conflicts.length) ui.info('Откатывать нечего.');
         break;
       }
       case 'doctor': case 'check':
