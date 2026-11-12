@@ -339,3 +339,63 @@ test('/commit: сообщение пишет модель, секреты не �
   await session.handle('/commit');
   assert.equal(git(cwd, ['log', '-1', '--format=%s']).out, 'Обновить cart.js');
 });
+
+test('файлы ветки: готовые, неготовые и под вопросом', async (t) => {
+  const { branchFiles, recordFiles, findUnfinished, formatBranchFiles } = await import('../src/filestatus.js');
+  const { git } = await import('../src/git.js');
+  assert.deepEqual(findUnfinished('const a = 1;\n// TODO: проверить\n'), { line: 2, what: 'TODO' });
+  assert.deepEqual(findUnfinished('raise NotImplementedError()'), { line: 1, what: 'не реализовано' });
+  assert.equal(findUnfinished('const mastodon = "photodoc";\n// всё готово\n'), null);
+
+  // Проект без git: показываются файлы, которые меняли агенты
+  const plain = tmp();
+  fs.writeFileSync(path.join(plain, 'a.js'), 'export const a = 1;\n');
+  assert.deepEqual(branchFiles(plain).files, []);
+  recordFiles(plain, ['a.js'], { solo: true });
+  assert.deepEqual(branchFiles(plain).files, [{ path: 'a.js', state: 'question', reason: 'изменён одним агентом, без ревью и проверки' }]);
+
+  if (git(os.tmpdir(), ['--version']).missing) { t.skip('git не установлен'); return; }
+  const cwd = tmp();
+  git(cwd, ['init', '-q', '-b', 'main']);
+  git(cwd, ['config', 'user.name', 'Тест']); git(cwd, ['config', 'user.email', 'test@example.com']);
+  fs.writeFileSync(path.join(cwd, 'old.js'), 'export const old = 1;\n');
+  git(cwd, ['add', '-A']); git(cwd, ['commit', '-q', '-m', 'начало']);
+  git(cwd, ['checkout', '-q', '-b', 'feature']);
+  const write = (name, text) => { fs.mkdirSync(path.dirname(path.join(cwd, name)), { recursive: true }); fs.writeFileSync(path.join(cwd, name), text); };
+  write('src/good.js', 'export const good = 1;\n');
+  write('src/todo.js', 'export function pay() {\n  // TODO: списание\n}\n');
+  write('src/bad.js', 'export const = ;\n');
+  write('src/review.js', 'export const r = 1;\n');
+  write('src/nocheck.js', 'export const n = 1;\n');
+  write('notes.txt', 'заметки, написанные вручную\n');
+  write('committed.js', 'export const c = 1;\n');
+  git(cwd, ['add', 'committed.js']); git(cwd, ['commit', '-q', '-m', 'в ветке']); // закоммиченное в ветке тоже показывается
+  recordFiles(cwd, ['src/good.js', 'src/todo.js', 'src/bad.js', 'committed.js'], { verdict: 'OK', status: 'PASS' });
+  recordFiles(cwd, ['src/review.js'], { verdict: 'ИСПРАВИТЬ', status: 'SKIP' });
+  recordFiles(cwd, ['src/nocheck.js'], { verdict: 'OK', status: 'SKIP' });
+
+  const info = branchFiles(cwd);
+  assert.equal(info.branch, 'feature');
+  assert.equal(info.base, 'main');
+  const byPath = Object.fromEntries(info.files.map((f) => [f.path, f]));
+  assert.equal(byPath['src/good.js'].state, 'ready');
+  assert.equal(byPath['committed.js'].state, 'ready');
+  assert.deepEqual([byPath['src/todo.js'].state, byPath['src/todo.js'].reason], ['unfinished', 'осталась пометка «TODO» в строке 2']);
+  assert.equal(byPath['src/bad.js'].state, 'unfinished');
+  assert.match(byPath['src/bad.js'].reason, /синтаксическая ошибка/);
+  assert.deepEqual([byPath['src/review.js'].state, byPath['src/review.js'].reason], ['unfinished', 'ревью не пройдено: остались замечания']);
+  assert.equal(byPath['src/nocheck.js'].state, 'question');
+  assert.deepEqual([byPath['notes.txt'].state, byPath['notes.txt'].reason], ['question', 'изменён вручную, агенты его не проверяли']);
+  assert.equal(byPath['old.js'], undefined, 'файл без изменений в ветке не показывается');
+  assert.deepEqual(info.counts, { ready: 2, unfinished: 3, question: 2 });
+  // Сначала неготовые, затем под вопросом, затем готовые
+  assert.deepEqual(info.files.map((f) => f.state), ['unfinished', 'unfinished', 'unfinished', 'question', 'question', 'ready', 'ready']);
+  assert.match(formatBranchFiles(info), /Ветка feature \(относительно main\): готовы 2, не готовы 3, под вопросом 2[\s\S]*✗ не готов  src\/bad\.js/);
+
+  // Готовый файл, изменённый после проверки, снова под вопросом
+  const later = new Date(Date.now() + 60000);
+  fs.utimesSync(path.join(cwd, 'src/good.js'), later, later);
+  const after = branchFiles(cwd).files.find((f) => f.path === 'src/good.js');
+  assert.equal(after.state, 'question');
+  assert.match(after.reason, /изменён после проверки/);
+});

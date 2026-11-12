@@ -8,6 +8,7 @@ import { execCommand } from './tools/command.js';
 import { resolvePath } from './tools/fsutil.js';
 import { platformInfo, spawnSpec } from './platform.js';
 import { diagnose } from './doctor.js';
+import { branchFiles, formatBranchFiles } from './filestatus.js';
 import { VERSION } from './version.js';
 import { CONFIG_DIR } from './config.js';
 import { formatJournal } from './memory.js';
@@ -71,6 +72,7 @@ export const HELP = `
   /yes                    вкл/выкл автоподтверждение записи и команд (опасные — всегда вручную)
   /model [имя]            показать или сменить модель для всех агентов
   /pull <имя>             скачать модель на сервер Ollama (например hf.co/автор/репозиторий:Q4_K_M)
+  /files                  файлы ветки: готовые, неготовые и под вопросом
   /commit [сообщение]     закоммитить все изменения; без сообщения его напишет модель
   /cd <папка>             сменить папку проекта
   /open [редактор]        открыть проект в редакторе: cursor, code, windsurf, zed
@@ -439,6 +441,9 @@ export class Session {
           if (res.ok) ui.done(`Коммит ${res.hash} создан. Отправить на сервер: !git push`);
           else { git(cfg.cwd, ['reset', '-q']); ui.error(res.error); }
         });
+      case 'files':
+        ui.print(formatBranchFiles(branchFiles(cfg.cwd)));
+        break;
       case 'mcp': {
         const servers = mcp.status();
         if (!servers.length) { ui.info('Серверы инструментов (MCP) не подключены. Добавить: настройки, раздел «Связи с другими средами», или файл ~/.lcc/mcp.json.'); break; }
