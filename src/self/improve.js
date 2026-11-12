@@ -80,6 +80,12 @@ export function resetToFactory() {
   return had;
 }
 
+/** Номера доработанных версий приложения: текущей и той, к которой вернёт откат (0 — заводская) */
+export function selfVersion() {
+  const state = readState();
+  return { current: Number(state.current) || 0, previous: Number(state.previous) || 0 };
+}
+
 export function selfStatus() {
   const state = readState();
   const factory = packageVersion(factoryRoot());

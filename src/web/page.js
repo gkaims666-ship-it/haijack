@@ -1878,11 +1878,22 @@ textarea.input { padding: 10px 14px; min-height: 96px; resize: vertical; line-he
     var min = Math.round((Date.now() - time) / 60000);
     return min < 1 ? 'только что' : min < 60 ? min + ' мин назад' : min < 2880 ? Math.round(min / 60) + ' ч назад' : Math.round(min / 1440) + ' дн назад';
   }
-  function drawHistory(points) {
+  function drawHistory(points, bytes, app) {
     var list = $('history-list');
     list.textContent = '';
+    if (app && app.current) {
+      // Доработки самого приложения: у них свой откат — к предыдущей версии программы
+      var card = el('div', 'point');
+      card.appendChild(el('small', '', 'приложение'));
+      card.appendChild(el('b', '', 'Работает доработанная версия v' + app.current));
+      card.appendChild(el('span', 'files', 'Откат вернёт ' + (app.previous ? 'версию v' + app.previous : 'заводскую версию') + ' и перезапустит программу.'));
+      var back = el('button', 'btn small', 'Откатить версию приложения'); back.type = 'button';
+      back.onclick = function () { confirmBox('Откатить версию приложения?', 'Программа вернётся к ' + (app.previous ? 'версии v' + app.previous : 'заводской версии') + ' и перезапустится.', 'Откатить', function () { sendText('/self undo'); }); };
+      card.appendChild(back);
+      list.appendChild(card);
+    }
     $('history-head').textContent = points.length
-      ? 'После каждой задачи сохраняется состояние изменённых файлов. Откат возвращает файлы к виду до выбранной задачи — вместе со всеми задачами после неё.'
+      ? 'После каждой задачи сохраняется состояние изменённых файлов. Откат возвращает файлы к виду до выбранной задачи — вместе со всеми задачами после неё. Точек: ' + points.length + (bytes ? ', на диске ' + formatSize(bytes) : '') + '.'
       : 'Пока пусто: задачи ещё ничего не меняли в этом проекте.';
     points.forEach(function (p, i) {
       var box = el('div', 'point');
@@ -1902,7 +1913,7 @@ textarea.input { padding: 10px 14px; min-height: 96px; resize: vertical; line-he
     });
   }
   $('open-history').onclick = function () {
-    api('GET', '/api/checkpoints').then(function (r) { drawHistory(r.points); show($('history')); }).catch(function (e) { note('error', e.message); });
+    api('GET', '/api/checkpoints').then(function (r) { drawHistory(r.points, r.bytes, r.app); show($('history')); }).catch(function (e) { note('error', e.message); });
   };
 
   // ---------- файлы ветки ----------
