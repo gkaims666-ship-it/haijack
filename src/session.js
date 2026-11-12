@@ -9,11 +9,11 @@ import { resolvePath } from './tools/fsutil.js';
 import { platformInfo, spawnSpec } from './platform.js';
 import { diagnose } from './doctor.js';
 import { branchFiles, formatBranchFiles } from './filestatus.js';
-import { listCheckpoints, undoCheckpoints, formatCheckpoints } from './checkpoints.js';
+import { listCheckpoints, undoCheckpoints, formatCheckpoints, historySize, clearCheckpoints } from './checkpoints.js';
 import { VERSION } from './version.js';
 import { CONFIG_DIR } from './config.js';
 import { formatJournal } from './memory.js';
-import { prepareStaging, activate, rollback, resetToFactory, selfStatus } from './self/improve.js';
+import { prepareStaging, activate, rollback, resetToFactory, selfStatus, selfVersion } from './self/improve.js';
 import { selfCheck } from './self/check.js';
 import { pullModel, MODEL_NAME } from './api/openai.js';
 import { mcp } from './mcp/client.js';
@@ -406,9 +406,21 @@ export class Session {
         if (d) ui.print(d); else ui.info('В последней задаче изменений нет.');
         break;
       }
-      case 'history': case 'checkpoints':
-        ui.print(formatCheckpoints(listCheckpoints(cfg.cwd)));
+      case 'history': case 'checkpoints': {
+        if (arg.trim().toLowerCase() === 'clear') {
+          const count = listCheckpoints(cfg.cwd).length;
+          if (!count) { ui.info('История изменений и так пуста.'); break; }
+          if (!(await ui.confirm(`Удалить всю историю изменений проекта (точек: ${count})? Файлы проекта не изменятся, но откатить прошлые задачи станет нельзя.`))) { ui.info('Отменено.'); break; }
+          clearCheckpoints(cfg.cwd);
+          ui.info('История изменений очищена.');
+          break;
+        }
+        // Доработки самого приложения — тоже часть истории: у них свой откат версии
+        const app = selfVersion();
+        const appLine = app.current ? `Приложение: работает доработанная версия v${app.current}. Откат к ${app.previous ? `v${app.previous}` : 'заводской версии'}: /self undo\n\n` : '';
+        ui.print(`${appLine}${formatCheckpoints(listCheckpoints(cfg.cwd), Date.now(), historySize(cfg.cwd))}`);
         break;
+      }
       case 'undo': {
         // Изменения незавершённой задачи, для которых точка ещё не сохранена, сначала сохраняются
         this.orchestrator.checkpoint?.(this.lastTask || 'незавершённая задача');
