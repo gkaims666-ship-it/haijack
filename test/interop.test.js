@@ -284,3 +284,58 @@ test('команды /mcp и /open; переименование чата', asyn
     assert.deepEqual((await post('/api/chats/rename', { id: 'main', title: '' })).chats.map((c) => c.title), ['Новый чат']);
   } finally { web.close(); await web.closed; }
 });
+
+test('/commit: сообщение пишет модель, секреты не попадают в коммит, отмена ничего не оставляет', async (t) => {
+  const { Session } = await import('../src/session.js');
+  const { silentUi } = await import('./helpers.js');
+  const { git, gitBranch, cleanMessage } = await import('../src/git.js');
+  if (git(os.tmpdir(), ['--version']).missing) { t.skip('git не установлен'); return; }
+  assert.equal(cleanMessage('```\n"Добавить скидки."\n```'), 'Добавить скидки');
+  assert.equal(cleanMessage('Commit message: Fix parser\n\n- handle empty input'), 'Fix parser\n\n- handle empty input');
+
+  const cwd = tmp();
+  const asked = [];
+  let answer = true;
+  const ui = silentUi({ confirm: async (q) => { asked.push(q); return answer; } });
+  ui.canAsk = true;
+  const prompts = [];
+  const orchestrator = { client: { complete: async (req) => { prompts.push(req); return '"Добавить расчёт скидки."\n\n- новая функция discount'; } } };
+  const session = new Session({ cfg: { cwd, models: {}, local: {}, model: 'm', autoApprove: false }, orchestrator, usage: {}, ui });
+
+  await session.handle('/commit');
+  assert.match(ui.log.join('\n'), /не репозиторий git/);
+  git(cwd, ['init', '-q', '-b', 'main']);
+  git(cwd, ['config', 'user.name', 'Тест']); git(cwd, ['config', 'user.email', 'test@example.com']);
+  assert.equal(gitBranch(cwd), 'main');
+  assert.equal(session.state().branch, 'main');
+  await session.handle('/commit');
+  assert.match(ui.log.join('\n'), /Коммитить нечего/);
+
+  fs.writeFileSync(path.join(cwd, 'cart.js'), 'export const discount = (p) => p * 0.9;\n');
+  fs.writeFileSync(path.join(cwd, '.env'), 'SECRET=1\n');
+  fs.writeFileSync(path.join(cwd, '.env.example'), 'SECRET=\n');
+  // Отмена: коммита нет, файлы снова не подготовлены
+  answer = false;
+  await session.handle('/commit');
+  assert.equal(git(cwd, ['log', '--oneline']).out, '');
+  assert.equal(git(cwd, ['diff', '--cached', '--name-only']).out, '');
+  // Согласие: коммит с сообщением модели, без файла с секретами
+  answer = true;
+  await session.handle('/commit');
+  assert.equal(git(cwd, ['log', '--format=%B']).out.trim(), 'Добавить расчёт скидки\n\n- новая функция discount');
+  assert.deepEqual(git(cwd, ['show', '--name-only', '--format=']).out.split('\n').sort(), ['.env.example', 'cart.js']);
+  assert.match(ui.log.join('\n'), /не включены файлы, похожие на секреты: \.env\./);
+  assert.match(prompts[0].prompt, /cart\.js[\s\S]*discount/);
+  assert.equal(asked.length, 2);
+  assert.ok(ui.log.some((l) => /^done:Коммит [0-9a-f]{7,} создан/.test(l)));
+
+  // Своё сообщение — без обращения к модели; сбой модели — простое сообщение по списку файлов
+  fs.appendFileSync(path.join(cwd, 'cart.js'), '// правка\n');
+  await session.handle('/commit Уточнить комментарий; rm -rf "$HOME"');
+  assert.equal(git(cwd, ['log', '-1', '--format=%s']).out, 'Уточнить комментарий; rm -rf "$HOME"');
+  assert.equal(prompts.length, 2, 'модель вызывалась только для двух коммитов без своего сообщения');
+  orchestrator.client.complete = async () => { throw new Error('сервер недоступен'); };
+  fs.appendFileSync(path.join(cwd, 'cart.js'), '// ещё\n');
+  await session.handle('/commit');
+  assert.equal(git(cwd, ['log', '-1', '--format=%s']).out, 'Обновить cart.js');
+});

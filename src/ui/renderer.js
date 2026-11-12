@@ -141,6 +141,12 @@ export class Renderer {
 
   // ---------- служебные сообщения ----------
   print(s) { this.spinner.stop(); out(`${s}\n`); }
+  /** План работы агента: список шагов с отметками */
+  plan(items) {
+    this.spinner.stop();
+    const mark = { done: c.green(sym.ok), in_progress: c.cyan('▸'), pending: c.dim('○') };
+    out(`${items.map((i) => `  ${mark[i.status] || mark.pending} ${i.status === 'done' ? c.dim(i.text) : i.text}`).join('\n')}\n`);
+  }
   shellOutput(s) { out(s); }
   retry({ attempt, wait, reason }) {
     this.spinner.stop();

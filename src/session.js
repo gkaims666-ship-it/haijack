@@ -15,6 +15,7 @@ import { prepareStaging, activate, rollback, resetToFactory, selfStatus } from '
 import { selfCheck } from './self/check.js';
 import { pullModel, MODEL_NAME } from './api/openai.js';
 import { mcp } from './mcp/client.js';
+import { stageAll, commit, cleanMessage, gitBranch, git } from './git.js';
 
 // Редакторы, в которых можно открыть папку проекта: имя для /open -> команда запуска
 export const EDITORS = { cursor: 'cursor', code: 'code', vscode: 'code', windsurf: 'windsurf', zed: 'zed' };
@@ -70,6 +71,7 @@ export const HELP = `
   /yes                    вкл/выкл автоподтверждение записи и команд (опасные — всегда вручную)
   /model [имя]            показать или сменить модель для всех агентов
   /pull <имя>             скачать модель на сервер Ollama (например hf.co/автор/репозиторий:Q4_K_M)
+  /commit [сообщение]     закоммитить все изменения; без сообщения его напишет модель
   /cd <папка>             сменить папку проекта
   /open [редактор]        открыть проект в редакторе: cursor, code, windsurf, zed
   /mcp                    подключённые серверы инструментов (MCP)
@@ -123,7 +125,7 @@ export class Session {
     return {
       mode: this.mode, target: this.target, busy: this.busy, looping: this.looping,
       model: this.cfg.model, provider: this.cfg.provider, cwd: this.cfg.cwd,
-      autoApprove: this.cfg.autoApprove, version: VERSION,
+      autoApprove: this.cfg.autoApprove, version: VERSION, branch: gitBranch(this.cfg.cwd),
     };
   }
 
@@ -403,6 +405,40 @@ export class Session {
       }
       case 'doctor': case 'check':
         return this.#guard(async (signal) => ui.print((await diagnose(cfg, signal)).report));
+      case 'commit':
+        return this.#guard(async (signal) => {
+          const staged = stageAll(cfg.cwd);
+          if (staged.error) { ui.warn(staged.error); return; }
+          if (staged.skipped?.length) ui.warn(`В коммит не включены файлы, похожие на секреты: ${staged.skipped.join(', ')}. Добавьте их в .gitignore.`);
+          if (!staged.files.length) { ui.info('Коммитить нечего: изменений нет.'); return; }
+          let message = arg.trim();
+          if (!message) {
+            // Сообщение пишет модель по самим изменениям; если она недоступна — простое сообщение по списку файлов
+            ui.info(`Изменено файлов: ${staged.files.length}. Составляю сообщение коммита…`);
+            try {
+              const answer = await this.orchestrator.client.complete({
+                model: cfg.models?.executor || cfg.model,
+                system: 'Ты пишешь сообщения коммитов. Ответь только сообщением: первая строка до 70 символов — что изменено и зачем, в повелительном наклонении; '
+                  + 'при необходимости пустая строка и 1–4 коротких пункта. Язык — как в сообщениях и комментариях проекта. Без кавычек, без пояснений.',
+                prompt: `Недавние коммиты (для стиля):\n${git(cfg.cwd, ['log', '-5', '--format=%s']).out || '(коммитов ещё нет)'}\n\nИзменения:\n${staged.stat}\n\n${staged.diff.slice(0, 12000)}`,
+                maxTokens: 400, signal,
+              });
+              message = cleanMessage(answer);
+            } catch (err) {
+              if (err.name === 'AbortError' || signal.aborted) { git(cfg.cwd, ['reset', '-q']); throw err; }
+            }
+            if (!message) message = `Обновить ${staged.files.slice(0, 3).join(', ')}${staged.files.length > 3 ? ` и ещё ${staged.files.length - 3}` : ''}`;
+          }
+          ui.print(`${message}\n\n${staged.stat}`);
+          if (!cfg.autoApprove && ui.canAsk !== false && !(await ui.confirm('Сделать коммит с этим сообщением?'))) {
+            git(cfg.cwd, ['reset', '-q']);
+            ui.info('Отменено. Свой текст можно задать так: /commit текст сообщения');
+            return;
+          }
+          const res = commit(cfg.cwd, message);
+          if (res.ok) ui.done(`Коммит ${res.hash} создан. Отправить на сервер: !git push`);
+          else { git(cfg.cwd, ['reset', '-q']); ui.error(res.error); }
+        });
       case 'mcp': {
         const servers = mcp.status();
         if (!servers.length) { ui.info('Серверы инструментов (MCP) не подключены. Добавить: настройки, раздел «Связи с другими средами», или файл ~/.lcc/mcp.json.'); break; }
