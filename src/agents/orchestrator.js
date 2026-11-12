@@ -3,6 +3,9 @@
 // Любое замечание Reviewer или падение у Executor возвращает задачу к Coder, после чего
 // изменённый код снова проходит ревью: непроверенные правки в итог не попадают.
 
+import { repoMapBlock } from '../repomap.js';
+import { checksBlock } from '../projectchecks.js';
+import { saveCheckpoint } from '../checkpoints.js';
 import { recordFiles } from '../filestatus.js';
 import { writeFileAtomic } from '../tools/fsutil.js';
 import { mcp } from '../mcp/client.js';
@@ -119,7 +122,26 @@ export class Orchestrator {
    * который ответит первым (ассистент в режиме одного агента, иначе Architect).
    */
   prime(mode, signal) {
-    return mode === 'solo' ? this.agents.solo.prime(signal) : this.agents.architect.prime(signal, { fresh: true });
+    const prefix = this.#projectBlock();
+    return mode === 'solo' ? this.agents.solo.prime(signal, { prefix }) : this.agents.architect.prime(signal, { fresh: true, prefix });
+  }
+
+  /**
+   * Сведения о проекте, с которых начинается сообщение с задачей: карта файлов с объявлениями и команды проверок.
+   * Агент сразу видит, где что лежит и чем проверять, и не тратит шаги на разведку.
+   */
+  #projectBlock() {
+    return `${repoMapBlock(this.cfg)}${checksBlock(this.cfg.cwd)}`;
+  }
+
+  /**
+   * Сохраняет контрольную точку: состояние файлов, изменённых задачей, до и после. Вызывается после каждой
+   * задачи над проектом — в том числе прерванной или упавшей, чтобы и её изменения можно было откатить.
+   */
+  checkpoint(task) {
+    if (!this.changes.revision || this.changes.saved === this.changes.revision) return null;
+    this.changes.saved = this.changes.revision;
+    return saveCheckpoint(this.cfg.cwd, task, this.changes.snapshots);
   }
 
   /** Сменить рабочую папку: агенты пересобирают системный промт под новый проект */
@@ -156,7 +178,8 @@ export class Orchestrator {
     this.changes.clear(); // /undo и /diff относятся к последней задаче
     let text;
     try {
-      text = await this.agents.solo.send(task, { signal });
+      // В начале диалога ассистент получает сведения о проекте; дальше они уже есть в истории
+      text = await this.agents.solo.send(this.agents.solo.messages.length ? task : `${this.#projectBlock()}${task}`, { signal });
     } finally {
       this.#saveDialog();
     }
@@ -255,7 +278,7 @@ export class Orchestrator {
     const { architect } = this.agents;
     architect.reset();
     this.ui.stage('Architect', 'анализ и план');
-    return architect.send(`Задача пользователя:\n${task}${this.#historyBlock()}`, { signal });
+    return architect.send(`${this.#projectBlock()}Задача пользователя:\n${task}${this.#historyBlock()}`, { signal });
   }
 
   /**
@@ -277,7 +300,7 @@ export class Orchestrator {
     let plan = opts.presetPlan;
     if (!plan) {
       this.ui.stage('Architect', 'анализ проекта и план');
-      plan = await architect.send(`Задача пользователя:\n${task}${opts.context ? `\n\n# Состояние работы\n${opts.context}` : ''}${this.#historyBlock()}`, { signal });
+      plan = await architect.send(`${this.#projectBlock()}Задача пользователя:\n${task}${opts.context ? `\n\n# Состояние работы\n${opts.context}` : ''}${this.#historyBlock()}`, { signal });
     }
     if (/РЕЖИМ:\s*ОТВЕТ/i.test(plan) && !/РЕЖИМ:\s*ИЗМЕНЕНИЯ/i.test(plan)) {
       this.history.push(`Вопрос: ${task.slice(0, 200)} — дан ответ`);
@@ -338,7 +361,7 @@ export class Orchestrator {
       this.ui.stage('Executor', status === 'FAIL' ? 'повторная проверка' : 'сборка и тесты');
       executor.reset();
       const exec = await executor.send(
-        `Задача пользователя:\n${task}\n\n# План (см. раздел «Проверка»)\n${plan}\n\n# Изменённые файлы\n${files.join('\n') || '(нет)'}\n\nПроверь результат.`,
+        `${checksBlock(this.cfg.cwd)}Задача пользователя:\n${task}\n\n# План (см. раздел «Проверка»)\n${plan}\n\n# Изменённые файлы\n${files.join('\n') || '(нет)'}\n\nПроверь результат.`,
         { signal },
       );
       status = parseVerdict(exec, 'СТАТУС', ['PASS', 'FAIL', 'SKIP']) || 'SKIP';

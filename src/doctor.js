@@ -10,6 +10,7 @@ import { mcp } from './mcp/client.js';
 import { githubToken } from './tools/github.js';
 import { platformInfo } from './platform.js';
 import { VERSION } from './version.js';
+import { detectChecks, formatChecks } from './projectchecks.js';
 
 /** @returns {Promise<{ok: boolean, problems: number, report: string}>} */
 export async function diagnose(cfg, signal) {
@@ -34,6 +35,12 @@ export async function diagnose(cfg, signal) {
   if (git.status === 0) {
     ok(`${git.stdout.trim()}${fs.existsSync(path.join(cfg.cwd, '.git')) ? ', проект — репозиторий git' : ', проект пока не репозиторий git'}`);
   } else warn('Git не найден: агенты не смогут делать commit и push', 'установите Git с https://git-scm.com');
+
+  try {
+    const checks = detectChecks(cfg.cwd);
+    if (checks.length) ok(`Проверки проекта: ${formatChecks(checks)}`);
+    else warn('Команды проверок проекта не определились: агенты будут подбирать их сами');
+  } catch { /* папка не читается — об этом уже сказано выше */ }
 
   // Модель
   if (!hasCredentials(cfg)) {

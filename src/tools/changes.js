@@ -25,6 +25,7 @@ export class ChangeSet {
   clear() {
     this.snapshots.clear();
     this.revision = 0;
+    this.saved = 0; // ревизия, для которой уже сохранена контрольная точка
   }
 
   /** Файлы, которые реально отличаются от исходного состояния */
