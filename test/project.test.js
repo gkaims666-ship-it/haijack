@@ -273,3 +273,114 @@ test('веб: модель заранее читает карту проекта
     assert.ok(web.hub.buffer.some((e) => e.t === 'msg' && /Откат выполнен \(задач: 2\)/.test(e.text)));
   } finally { web.close(); await web.closed; mock.server.close(); }
 });
+
+test('история без ограничений: большие файлы, сотни точек, одинаковое содержимое хранится один раз', async () => {
+  const { clearCheckpoints, historySize } = await import('../src/checkpoints.js');
+  const cwd = project({ 'big.bin': 'x', 'a.txt': '0' });
+  const file = (n) => path.join(cwd, n);
+  const edit = (name, rel, data) => {
+    let before = null;
+    try { before = fs.readFileSync(file(rel)); } catch { /* нового файла ещё нет */ }
+    fs.writeFileSync(file(rel), data);
+    return saveCheckpoint(cwd, name, new Map([[file(rel), before]]));
+  };
+  // Файл в 6 МБ (раньше файлы больше 3 МБ в историю не попадали)
+  const big = Buffer.alloc(6 * 1024 * 1024, 7);
+  assert.deepEqual(edit('большой файл', 'big.bin', big).files, ['big.bin']);
+  assert.deepEqual(undoCheckpoints(cwd, 1), { points: 1, restored: ['big.bin'], conflicts: [] });
+  assert.equal(fs.readFileSync(file('big.bin'), 'utf8'), 'x');
+
+  // 150 точек подряд (раньше хранилось не больше 80) — все на месте, откат до самой первой работает
+  for (let i = 1; i <= 150; i++) edit(`шаг ${i}`, 'a.txt', String(i));
+  assert.equal(listCheckpoints(cwd).length, 150);
+  // «После» одной точки и «до» следующей — одно и то же содержимое: в хранилище оно лежит один раз
+  const blobs = fs.readdirSync(path.join(process.env.LCC_HOME, 'checkpoints')).map((d) => path.join(process.env.LCC_HOME, 'checkpoints', d, 'blobs')).filter((d) => fs.existsSync(d));
+  const mine = blobs.find((d) => fs.readdirSync(d).length === 151);
+  assert.ok(mine, 'ожидалось 151 разное содержимое: исходное и 150 версий');
+  assert.ok(historySize(cwd) > 0);
+  const first = listCheckpoints(cwd).at(-1).id;
+  assert.equal(undoCheckpoints(cwd, first).points, 150);
+  assert.equal(fs.readFileSync(file('a.txt'), 'utf8'), '0');
+  assert.deepEqual(fs.readdirSync(mine), [], 'ненужное содержимое убрано');
+
+  // Ограничение — только по желанию
+  process.env.LCC_HISTORY_LIMIT = '3';
+  try {
+    for (let i = 1; i <= 6; i++) edit(`ограниченный ${i}`, 'a.txt', `L${i}`);
+    assert.deepEqual(listCheckpoints(cwd).map((p) => p.task), ['ограниченный 6', 'ограниченный 5', 'ограниченный 4']);
+  } finally { delete process.env.LCC_HISTORY_LIMIT; }
+  assert.equal(clearCheckpoints(cwd), 3);
+  assert.deepEqual(listCheckpoints(cwd), []);
+  assert.equal(fs.readFileSync(file('a.txt'), 'utf8'), 'L6', 'очистка истории не трогает файлы проекта');
+});
+
+test('точки прежнего формата откатываются; /history clear и строка о версии приложения', async () => {
+  const crypto = await import('node:crypto');
+  const cwd = project({ 'old.txt': 'после' });
+  const dir = path.join(process.env.LCC_HOME, 'checkpoints', crypto.createHash('sha1').update(path.resolve(cwd)).digest('hex').slice(0, 16));
+  fs.mkdirSync(dir, { recursive: true });
+  // Точка, записанная версией 2.0.0: содержимое прямо в файле точки
+  fs.writeFileSync(path.join(dir, '000001.json'), JSON.stringify({ cwd, entries: [{ path: 'old.txt', before: Buffer.from('до').toString('base64'), after: Buffer.from('после').toString('base64') }] }));
+  fs.writeFileSync(path.join(dir, '000001.meta.json'), JSON.stringify({ time: Date.now(), task: 'старая точка', files: ['old.txt'], skipped: [], bytes: 10 }));
+  assert.deepEqual(listCheckpoints(cwd).map((p) => p.task), ['старая точка']);
+  assert.deepEqual(undoCheckpoints(cwd, 1), { points: 1, restored: ['old.txt'], conflicts: [] });
+  assert.equal(fs.readFileSync(path.join(cwd, 'old.txt'), 'utf8'), 'до');
+
+  const ui = silentUi({ confirm: async () => true });
+  ui.canAsk = true;
+  const session = new Session({ cfg: { cwd, models: {}, local: {} }, orchestrator: { changes: { clear() {} }, agents: {} }, usage: {}, ui });
+  await session.handle('/history clear');
+  assert.match(ui.log.join('\n'), /и так пуста/);
+  saveCheckpoint(cwd, 'новая', new Map([[path.join(cwd, 'old.txt'), Buffer.from('другое')]]));
+  await session.handle('/history');
+  assert.match(ui.log.join('\n'), /Контрольные точки \(1\), на диске \d+ КБ[\s\S]*новая[\s\S]*\/history clear/);
+  await session.handle('/history clear');
+  assert.deepEqual(listCheckpoints(cwd), []);
+  assert.match(ui.log.join('\n'), /История изменений очищена/);
+});
+
+test('структурный разбор: комментарии, строки, многострочные объявления, вложенность', async () => {
+  const { parseSource } = await import('../src/repomap.js');
+  const sigs = (text, ext) => parseSource(text, ext).map((s) => s.sig);
+  const lineOf = (text, ext, name) => parseSource(text, ext).find((s) => s.name === name)?.line;
+
+  const js = [
+    '// function fake1() {}', '/* class Fake2 {', '  method() {}', '} */',
+    'const s = "function fake3() {}"; const t = `class Fake4 { m() {} }`;',
+    'const re = /function fake5\\(\\) \\{"/;',
+    'export async function load(', '  url,', '  { retries = defaults(3), signal } = {},', ') {', '  function inner() {}', '  const helper = () => {};', '}',
+    'export default class Store extends Base', '{', '\t#items = [];', '\tstatic create(opts = {}) { return new Store(); }', '\tget size() { return 1; }',
+    '\thandle = async (event) => {', '\t\tconst nested = () => {};', '\t};', '\t#secret(a) { if (a) { foo(a); } for (const x of y) { bar(x); } }', '}',
+    'export const api = {', '  get(id) {},', '  save: async (item) => {},', '  remove: function (id) {},', '  nested: { deep() {} },', '};',
+    'export const single = x => x * 2;', 'const notFn = compute(1, 2);',
+  ].join('\n');
+  assert.deepEqual(sigs(js, '.js'), ['load(url, { retries = defaults(3), signal } = {})', 'class Store', 'Store.create(opts = {})', 'Store.size()', 'Store.handle(event)', 'Store.#secret(a)',
+    'api', 'api.get(id)', 'api.save(item)', 'api.remove(id)', 'single(x)']);
+  assert.equal(lineOf(js, '.js', 'load'), 7);
+  assert.equal(lineOf(js, '.js', 'create'), 17);
+
+  const ts = ['export namespace Geo {', '  export function distance(a: Point, b: Point): number { return 0; }', '}',
+    'export abstract class Repo<T extends { id: string }> implements Store<T> {', '  abstract find(id: string): Promise<T>;',
+    '  protected async save<K extends keyof T>(item: T, key: K): Promise<void> {}', '  private cache = new Map<string, T>();', '}',
+    'export function generic<T, U = T[]>(items: T[], map: (x: T) => U): U[] { return []; }'].join('\n');
+  assert.deepEqual(sigs(ts, '.ts'), ['namespace Geo', 'Geo.distance(a: Point, b: Point)', 'class Repo', 'Repo.find(id: string)', 'Repo.save(item: T, key: K)', 'generic(items: T[], map: (x: T) => U)']);
+
+  const py = ['"""', 'def fake_in_docstring():', '    pass', '"""', '# def fake_comment(): pass', 's = "class FakeStr:"', '@decorator(arg)',
+    'async def fetch(', '    url: str,', '    *,', '    timeout: float = default_timeout(),', ') -> bytes:', '    def nested(): pass', '    return b""', '',
+    'class Service(Base):', '    """def also_fake(self): pass"""', '    def name(self) -> str:', '        return "x"', '    def _hidden(self): pass',
+    '    @classmethod', '    def build(cls, cfg): return cls(cfg)'].join('\n');
+  assert.deepEqual(sigs(py, '.py'), ['fetch(url: str, *, timeout: float = default_timeout())', 'class Service', 'Service.name()', 'Service.build(cfg)']);
+
+  assert.deepEqual(sigs('func Map[T any, U any](\n\titems []T,\n\tfn func(T) U,\n) []U { return nil }\ntype Stack[T any] struct { items []T }\nfunc (s *Stack[T]) Push(v T) { func() {}() }\n', '.go'),
+    ['Map(items []T, fn func(T) U)', 'struct Stack', 'Stack.Push(v T)']);
+  assert.deepEqual(sigs("impl<'a, T: Clone> Parser<'a, T> for Config<'a> {\n    fn parse(&'a self, input: &str, sep: char) -> T { let c = '\"'; todo!() }\n}\npub trait Shape { fn area(&self) -> f64; }\npub mod util {\n    pub fn clamp(v: i32) -> i32 { v }\n}\n", '.rs'),
+    ['Config::parse(input: &str, sep: char)', 'trait Shape', 'Shape::area()', 'mod util', 'util::clamp(v: i32)']);
+  assert.deepEqual(sigs('// public void fake() {}\n@Service\npublic final class Orders<T extends Order> {\n    public Orders(Repo r) {}\n    @Override\n    public Optional<T> find(String id, int limit) throws IOException { return call(id); }\n    private void run() { if (x) { go(1); } result = compute(2); }\n    static class Inner { int size() { return 0; } }\n}\n', '.java'),
+    ['class Orders', 'Orders.find(String id, int limit)', 'Orders.run()', 'class Orders.Inner', 'Inner.size()']);
+  assert.deepEqual(sigs('namespace Shop\n{\n    public sealed class Cart : ICart\n    {\n        public decimal Total(string code = "none") => 0;\n        public async Task<List<Item>> LoadAsync(int id, CancellationToken ct)\n        {\n            var x = Compute(1);\n        }\n        public string Name { get; set; }\n    }\n}\n', '.cs'),
+    ['class Cart', 'Cart.Total(string code = "none")', 'Cart.LoadAsync(int id, CancellationToken ct)']);
+  assert.deepEqual(sigs('namespace net {\nclass Socket : public Base {\npublic:\n    explicit Socket(int fd);\n    virtual ~Socket() = default;\n    int send(const std::string& data, int flags = 0) const override;\n};\nint Socket::send(const std::string& data, int flags) const { if (x) { go(1); } return 0; }\n}\nint main(int argc, char **argv) { int r = run(argc); return r; }\nstruct Vec { float x, y; };\n', '.cpp'),
+    ['class Socket', 'Socket::send(const std::string& data, int flags = 0)', 'Socket::send(const std::string& data, int flags)', 'main(int argc, char **argv)', 'struct Vec']);
+  assert.deepEqual(sigs('module Billing\n  class Invoice < Base\n    def total(tax = 0.2)\n      @items.sum\n    end\n    def self.build(attrs) new(attrs) end\n  end\nend\n', '.rb'),
+    ['module Billing', 'class Invoice', 'Invoice#total(tax = 0.2)', 'Invoice.build(attrs)']);
+});
