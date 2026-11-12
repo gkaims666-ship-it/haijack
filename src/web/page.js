@@ -297,6 +297,11 @@ button.cat-item:hover { padding-left: 8px; }
 .plan-item.in_progress i { border-color: var(--reviewer); background: var(--reviewer); box-shadow: 0 0 9px var(--reviewer); }
 .plan-item.done i { background: var(--ok); border-color: var(--ok); }
 .plan-item.done span { color: var(--faint); text-decoration: line-through; text-decoration-color: rgba(150, 180, 255, .25); }
+.point { padding: 13px 0 15px; border-bottom: 1px solid var(--line); display: grid; gap: 4px; }
+.point small { color: var(--faint); font-size: 12.5px; }
+.point b { font-weight: 560; overflow-wrap: anywhere; }
+.point .files { color: var(--muted); font: 12.5px/1.5 var(--mono); overflow-wrap: anywhere; }
+.point .btn { justify-self: start; margin-top: 6px; }
 /* Файлы ветки: окантовка по состоянию — зелёная «готов», красная «не готов», жёлтая «под вопросом» */
 .fstat { display: block; width: 100%; text-align: left; padding: 10px 13px; margin-top: 8px; border-radius: 12px; border: 1.5px solid var(--line-strong); transition: background .14s; }
 .fstat:hover { background: var(--raised); }
@@ -429,6 +434,7 @@ textarea.input { padding: 10px 14px; min-height: 96px; resize: vertical; line-he
       <button class="project" id="project" type="button" title="Файлы ветки"></button>
     </div>
     <button class="icon-btn" id="open-memory" title="Память и журнал" aria-label="Память и журнал"><svg viewBox="0 0 24 24"><path d="M12 7v5l3 2"/><circle cx="12" cy="12" r="8.5"/></svg></button>
+    <button class="icon-btn" id="open-history" title="История изменений" aria-label="История изменений"><svg viewBox="0 0 24 24"><path d="M4.5 12a7.5 7.5 0 1 0 2.4-5.5M4.5 5v3.5H8M12 8v4.3l2.8 1.7"/></svg></button>
     <button class="icon-btn" id="open-export" title="Сохранить диалог в файл" aria-label="Сохранить диалог в файл"><svg viewBox="0 0 24 24"><path d="M12 4v11M7.5 10.5L12 15l4.5-4.5M5 19.5h14"/></svg></button>
     <button class="icon-btn" id="open-clear" title="Очистить диалог" aria-label="Очистить диалог"><svg viewBox="0 0 24 24"><path d="M4 7h16M9 7V4.5h6V7M6.5 7l1 12.5h9l1-12.5M10 11v5M14 11v5"/></svg></button>
     <button class="icon-btn" id="open-settings" title="Настройки" aria-label="Настройки"><svg viewBox="0 0 24 24"><path d="M4 7h10M18 7h2M4 17h2M10 17h10"/><circle cx="16" cy="7" r="2"/><circle cx="8" cy="17" r="2"/></svg></button>
@@ -558,6 +564,14 @@ textarea.input { padding: 10px 14px; min-height: 96px; resize: vertical; line-he
     <pre class="block" id="m-journal"></pre>
   </div>
   <div class="sheet-foot"><button class="btn small" id="m-forget">Стереть память</button></div>
+</aside>
+
+<aside class="sheet" id="history" hidden aria-labelledby="history-title">
+  <div class="sheet-head"><h2 id="history-title">История изменений</h2><button class="icon-btn" data-close aria-label="Закрыть"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg></button></div>
+  <div class="sheet-body">
+    <p class="note" id="history-head" style="margin-top:0"></p>
+    <div id="history-list"></div>
+  </div>
 </aside>
 
 <aside class="sheet" id="branch" hidden aria-labelledby="branch-title">
@@ -1333,7 +1347,7 @@ textarea.input { padding: 10px 14px; min-height: 96px; resize: vertical; line-he
   }
   // Подсказка команд: появляется, когда строка начинается с «/»
   var COMMANDS = [
-    ['/help', 'все команды'], ['/diff', 'показать изменения последней задачи'], ['/undo', 'откатить изменения последней задачи'],
+    ['/help', 'все команды'], ['/diff', 'показать изменения последней задачи'], ['/undo', 'откатить изменения последней задачи'], ['/history', 'история изменений и откат на любой шаг'],
     ['/retry', 'выполнить последнюю задачу заново'], ['/clear', 'очистить диалог, сохранив опыт в память'],
     ['/doctor', 'проверить, всё ли готово к работе'], ['/memory', 'что программа помнит'], ['/journal', 'последние задачи и их результаты'], ['/status', 'среда и настройки'],
     ['/commit', 'закоммитить изменения; сообщение напишет модель'], ['/files', 'файлы ветки: готовые, неготовые, под вопросом'], ['/cost', 'расход токенов за сессию'], ['/cd ', 'сменить папку проекта'], ['/open', 'открыть проект в Cursor или VS Code'], ['/mcp', 'подключённые серверы инструментов'], ['/loop ', 'повторять задачу до остановки'],
@@ -1857,6 +1871,38 @@ textarea.input { padding: 10px 14px; min-height: 96px; resize: vertical; line-he
   $('m-forget').onclick = function () { closeSheet(); sendText('/forget'); };
   $('open-clear').onclick = function () {
     confirmBox('Очистить диалог?', 'Переписка исчезнет с экрана, а агенты начнут с чистого листа — так программа тратит меньше ресурсов. Накопленный опыт перед этим сохранится в памяти.', 'Очистить', function () { sendText('/clear'); });
+  };
+
+  // ---------- история изменений: контрольные точки задач ----------
+  function ago(time) {
+    var min = Math.round((Date.now() - time) / 60000);
+    return min < 1 ? 'только что' : min < 60 ? min + ' мин назад' : min < 2880 ? Math.round(min / 60) + ' ч назад' : Math.round(min / 1440) + ' дн назад';
+  }
+  function drawHistory(points) {
+    var list = $('history-list');
+    list.textContent = '';
+    $('history-head').textContent = points.length
+      ? 'После каждой задачи сохраняется состояние изменённых файлов. Откат возвращает файлы к виду до выбранной задачи — вместе со всеми задачами после неё.'
+      : 'Пока пусто: задачи ещё ничего не меняли в этом проекте.';
+    points.forEach(function (p, i) {
+      var box = el('div', 'point');
+      box.appendChild(el('small', '', '#' + p.id + ' · ' + ago(p.time) + ' · ' + plural(p.files.length, 'файл', 'файла', 'файлов')));
+      box.appendChild(el('b', '', p.task || '(без описания)'));
+      box.appendChild(el('span', 'files', p.files.slice(0, 8).join(', ') + (p.files.length > 8 ? ', +' + (p.files.length - 8) : '')));
+      var undo = el('button', 'btn small', i === 0 ? 'Откатить эту задачу' : 'Откатить до этого места (' + plural(i + 1, 'задача', 'задачи', 'задач') + ')'); undo.type = 'button';
+      undo.onclick = function () {
+        confirmBox('Откатить изменения?', i === 0
+          ? 'Файлы вернутся к состоянию до задачи «' + (p.task || '').slice(0, 80) + '».'
+          : 'Будут отменены последние задачи: ' + (i + 1) + '. Файлы, которые вы меняли после них сами, останутся нетронутыми.', 'Откатить', function () {
+          api('POST', '/api/checkpoints/undo', { id: p.id }).then(function () { closeSheet(); }, function (e) { closeSheet(); note('error', e.message); });
+        });
+      };
+      box.appendChild(undo);
+      list.appendChild(box);
+    });
+  }
+  $('open-history').onclick = function () {
+    api('GET', '/api/checkpoints').then(function (r) { drawHistory(r.points); show($('history')); }).catch(function (e) { note('error', e.message); });
   };
 
   // ---------- файлы ветки ----------

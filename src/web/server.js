@@ -27,6 +27,7 @@ import { mcp, parseMcpConfig, MCP_FILE } from '../mcp/client.js';
 import { githubToken } from '../tools/github.js';
 import { walk } from '../tools/fsutil.js';
 import { branchFiles } from '../filestatus.js';
+import { listCheckpoints, undoCheckpoints } from '../checkpoints.js';
 
 const MAX_BODY = 12 * 1024 * 1024;
 const IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/webp', 'image/gif'];
@@ -530,6 +531,8 @@ export async function startWeb({ cfg, mode, port = 0, host = '127.0.0.1', token,
           }
           case '/api/mcp':
             return send(res, 200, { servers: mcp.status() });
+          case '/api/checkpoints':
+            return send(res, 200, { points: listCheckpoints(cfg.cwd) });
           case '/api/branch':
             return send(res, 200, branchFiles(cfg.cwd));
           case '/api/files': {
@@ -595,6 +598,20 @@ export async function startWeb({ cfg, mode, port = 0, host = '127.0.0.1', token,
           // Сервер, описанный в файлах проекта, запускается только после явного разрешения
           await mcp.trust(String(body.name ?? ''));
           return send(res, 200, { servers: mcp.status() });
+        case '/api/checkpoints/undo': {
+          // Откат точки и всех более новых: подтверждение пользователь дал в окне
+          if (running) return send(res, 409, { error: 'Дождитесь окончания текущей задачи или остановите её.' });
+          orchestrator.checkpoint(session.lastTask || 'незавершённая задача');
+          const id = Number(body.id);
+          if (!Number.isInteger(id) || !listCheckpoints(cfg.cwd).some((p) => p.id === id)) return send(res, 404, { error: 'Такой контрольной точки нет' });
+          const result = undoCheckpoints(cfg.cwd, id);
+          orchestrator.changes.clear();
+          for (const a of Object.values(orchestrator.agents)) a.reset(); // агенты помнят откатанные версии файлов
+          if (result.restored.length) hub.emit({ t: 'msg', level: 'ok', text: `Откат выполнен (задач: ${result.points}). Восстановлено: ${result.restored.join(', ')}` });
+          if (result.conflicts.length) hub.emit({ t: 'msg', level: 'warn', text: `Не тронуты, потому что менялись после задачи: ${result.conflicts.join(', ')}. Верните их вручную или через git.` });
+          primeSoon();
+          return send(res, 200, { ...result, points: listCheckpoints(cfg.cwd) });
+        }
         case '/api/retry': {
           if (running) return send(res, 409, { error: 'Дождитесь окончания текущей задачи или остановите её.' });
           const again = session.takeRetry();
