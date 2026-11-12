@@ -9,7 +9,7 @@ import { resolvePath } from './tools/fsutil.js';
 import { platformInfo, spawnSpec } from './platform.js';
 import { diagnose } from './doctor.js';
 import { branchFiles, formatBranchFiles } from './filestatus.js';
-import { listCheckpoints, undoCheckpoints, formatCheckpoints, historySize, clearCheckpoints } from './checkpoints.js';
+import { listCheckpoints, undoCheckpoints, formatCheckpoints, historySize, clearCheckpoints, rejectChange } from './checkpoints.js';
 import { VERSION } from './version.js';
 import { CONFIG_DIR } from './config.js';
 import { formatJournal } from './memory.js';
@@ -17,6 +17,10 @@ import { prepareStaging, activate, rollback, resetToFactory, selfStatus, selfVer
 import { selfCheck } from './self/check.js';
 import { pullModel, MODEL_NAME } from './api/openai.js';
 import { mcp } from './mcp/client.js';
+import { runParallel, splitTasks, formatParallel, MAX_PARALLEL } from './parallel.js';
+import { collector } from './mcp/server.js';
+import { Orchestrator } from './agents/orchestrator.js';
+import { listProcesses, stopProcess, stopAllProcesses } from './tools/background.js';
 import { stageAll, commit, cleanMessage, gitBranch, git } from './git.js';
 
 // Редакторы, в которых можно открыть папку проекта: имя для /open -> команда запуска
@@ -52,6 +56,7 @@ export const HELP = `
 Задачи:
   <текст>                 выполнить задачу. В режимах auto и plan работа продолжается заходами,
                           пока ревью не останется без замечаний, а проверки не пройдут
+  /parallel з1 || з2      выполнить независимые задачи одновременно, каждую в своей копии проекта
   /loop <текст>           непрерывная задача: повторять итерации до остановки (Ctrl+C или «Остановить»)
   /self <текст>           улучшить само приложение: правки, самопроверка, установка новой версии
   /target [project|self]  куда направлять обычные задачи: в проект или в само приложение
@@ -59,6 +64,7 @@ export const HELP = `
 Изменения:
   /diff                   показать изменения последней задачи
   /undo [#N]              откатить последнюю задачу; с номером — точку N и все более новые
+  /reject <файл>          отклонить изменения последней задачи в одном файле
   /history                история изменений: контрольные точки задач
   /self status|undo|reset версия приложения, откат доработки, возврат к заводской версии
 
@@ -78,6 +84,8 @@ export const HELP = `
   /commit [сообщение]     закоммитить все изменения; без сообщения его напишет модель
   /cd <папка>             сменить папку проекта
   /open [редактор]        открыть проект в редакторе: cursor, code, windsurf, zed
+  /ps                     фоновые процессы, запущенные агентами
+  /kill <номер|all>       остановить фоновый процесс
   /mcp                    подключённые серверы инструментов (MCP)
   /cost                   расход токенов за сессию
   /doctor                 проверить всё: модель, сервер, проект, связи — и что исправить
@@ -130,6 +138,7 @@ export class Session {
       mode: this.mode, target: this.target, busy: this.busy, looping: this.looping,
       model: this.cfg.model, provider: this.cfg.provider, cwd: this.cfg.cwd,
       autoApprove: this.cfg.autoApprove, version: VERSION, branch: gitBranch(this.cfg.cwd),
+      processes: listProcesses().filter((p) => p.running).length,
     };
   }
 
@@ -421,6 +430,23 @@ export class Session {
         ui.print(`${appLine}${formatCheckpoints(listCheckpoints(cfg.cwd), Date.now(), historySize(cfg.cwd))}`);
         break;
       }
+      case 'reject': {
+        // Отклонить изменения последней задачи в одном файле, оставив остальные
+        this.orchestrator.checkpoint?.(this.lastTask || 'незавершённая задача');
+        const last = listCheckpoints(cfg.cwd)[0];
+        if (!last) { ui.info('Отклонять нечего: задачи пока ничего не меняли.'); break; }
+        const wanted = arg.trim().replace(/\\/g, '/');
+        if (!wanted) { ui.info(`Укажите файл: /reject путь. В последней задаче изменены: ${last.files.join(', ')}`); break; }
+        const file = last.files.find((f) => f === wanted) || last.files.find((f) => f.endsWith(`/${wanted}`));
+        if (!file) { ui.warn(`Последняя задача не меняла ${wanted}. Изменены: ${last.files.join(', ')}`); break; }
+        try {
+          rejectChange(cfg.cwd, last.id, file);
+          this.orchestrator.changes.clear();
+          for (const a of Object.values(this.orchestrator.agents)) a.reset();
+          ui.info(`Изменения в ${file} отклонены, остальные изменения задачи остались.`);
+        } catch (err) { ui.warn(err.message); }
+        break;
+      }
       case 'undo': {
         // Изменения незавершённой задачи, для которых точка ещё не сохранена, сначала сохраняются
         this.orchestrator.checkpoint?.(this.lastTask || 'незавершённая задача');
@@ -484,11 +510,55 @@ export class Session {
       case 'files':
         ui.print(formatBranchFiles(branchFiles(cfg.cwd)));
         break;
+      case 'parallel': {
+        const tasks = splitTasks(arg);
+        if (tasks.length < 2) { ui.info('Перечислите независимые задачи через «||»: /parallel добавь тесты для корзины || обнови README'); break; }
+        if (tasks.length > MAX_PARALLEL) { ui.warn(`Одновременно — не больше ${MAX_PARALLEL} задач. Сейчас их ${tasks.length}.`); break; }
+        if (!cfg.autoApprove && ui.canAsk !== false && !(await ui.confirm(`Запустить задачи одновременно (${tasks.length}), каждую в своей копии проекта? В копиях агенты пишут файлы и запускают команды без вопросов (опасные команды не выполняются); изменения попадут в проект после окончания, одной точкой в истории.`))) { ui.info('Отменено.'); break; }
+        return this.#guard(async (signal) => {
+          const result = await runParallel({
+            cfg, tasks, signal,
+            onProgress: (line) => ui.info(line),
+            spawn: (copyCfg, hooks) => {
+              const quiet = collector(copyCfg, hooks);
+              const orchestrator = new Orchestrator({ client: this.orchestrator.client, cfg: copyCfg, ui: quiet, usage: this.usage, memory: undefined });
+              const session = new Session({ cfg: copyCfg, orchestrator, usage: this.usage, ui: quiet, mode: this.mode === 'solo' ? 'solo' : 'auto' });
+              session.selfHint = false;
+              return { session, orchestrator, ui: quiet };
+            },
+          });
+          // Агенты основной сессии не видели этих изменений
+          this.orchestrator.changes.clear();
+          for (const a of Object.values(this.orchestrator.agents)) a.reset();
+          ui.print(formatParallel(result));
+        });
+      }
+      case 'ps': {
+        const list = listProcesses();
+        ui.print(list.length ? `Фоновые процессы:\n${list.map((p) => `${p.id}: ${p.status}, ${p.seconds} с — ${p.command}`).join('\n')}\n\nОстановить: /kill номер или /kill all` : 'Фоновых процессов нет.');
+        break;
+      }
+      case 'kill': {
+        if (!arg.trim()) { ui.info('Укажите номер процесса или all: /kill 2, /kill all. Список: /ps'); break; }
+        if (arg.trim().toLowerCase() === 'all') { ui.info(`Остановлено фоновых процессов: ${stopAllProcesses()}`); break; }
+        ui.info(stopProcess(arg.trim()) ? `Процесс ${arg.trim()} остановлен.` : `Процесса ${arg.trim()} нет. Список: /ps`);
+        break;
+      }
       case 'mcp': {
+        const [sub, target] = arg.trim().split(/\s+/);
+        if (sub === 'login' || sub === 'logout') {
+          if (!target) { ui.info(`Укажите сервер: /mcp ${sub} имя`); break; }
+          try {
+            if (sub === 'logout') { await mcp.logout(target); ui.info(`Вход на ${target} забыт.`); break; }
+            const flow = await mcp.login(target);
+            ui.print(`Откройте в браузере страницу входа на ${target}:\n${flow.url}\n\nПосле входа сервер подключится сам (проверить: /mcp).`);
+          } catch (err) { ui.warn(err.message); }
+          break;
+        }
         const servers = mcp.status();
         if (!servers.length) { ui.info('Серверы инструментов (MCP) не подключены. Добавить: настройки, раздел «Связи с другими средами», или файл ~/.lcc/mcp.json.'); break; }
         ui.print(servers.map((s) => {
-          const state = s.state === 'ready' ? `работает, инструментов: ${s.tools.length}` : s.state === 'blocked' ? `ждёт разрешения в настройках (${s.source})` : s.state === 'error' ? `не запустился: ${s.error}` : 'запускается';
+          const state = s.state === 'ready' ? `работает, инструментов: ${s.tools.length}` : s.state === 'auth' ? `нужен вход: /mcp login ${s.name}${s.error ? ` (${s.error})` : ''}` : s.state === 'blocked' ? `ждёт разрешения в настройках (${s.source})` : s.state === 'error' ? `не запустился: ${s.error}` : 'запускается';
           return `${s.name} — ${state}${s.state === 'ready' && s.tools.length ? `\n  ${s.tools.join(', ')}` : ''}`;
         }).join('\n'));
         break;

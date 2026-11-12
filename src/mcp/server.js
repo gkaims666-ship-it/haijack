@@ -47,7 +47,7 @@ const TOOLS = [
 ];
 
 /** Интерфейс без экрана: копит то, что агенты сказали и сделали, для итогового отчёта */
-function collector(cfg, hooks = {}) {
+export function collector(cfg, hooks = {}) {
   const ui = {
     cfg, canAsk: false, lines: [], text: '', last: '',
     stage: (label, desc) => { ui.flush(); ui.lines.push(`\n## ${label}${desc ? ` — ${desc}` : ''}`); hooks.onNote?.(`\n\n**${label}**${desc ? ` — ${desc}` : ''}\n\n`); },

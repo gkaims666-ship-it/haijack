@@ -50,6 +50,20 @@ export function recordFiles(cwd, files, { verdict = null, status = 'SKIP', solo 
   } catch { /* состояние файлов — удобство: сбой записи не мешает работе */ }
 }
 
+/** Переносит записи о файлах из временной копии проекта в сам проект (после параллельных задач) */
+export function moveRecords(fromCwd, toCwd, files) {
+  try {
+    const store = readStore();
+    const from = store[fromCwd] || {};
+    const to = store[toCwd] && typeof store[toCwd] === 'object' ? store[toCwd] : {};
+    const time = Date.now() + 1500; // перенос только что переписал файлы: запись должна быть не старше их
+    for (const f of files) if (from[f]) to[f] = { ...from[f], time };
+    store[toCwd] = to;
+    delete store[fromCwd];
+    writeFileAtomic(STORE, JSON.stringify(store));
+  } catch { /* состояние файлов — удобство */ }
+}
+
 /** Первая пометка недоделанного в тексте: { line, what } или null */
 export function findUnfinished(text) {
   const lines = text.split('\n');
