@@ -297,6 +297,18 @@ button.cat-item:hover { padding-left: 8px; }
 .plan-item.in_progress i { border-color: var(--reviewer); background: var(--reviewer); box-shadow: 0 0 9px var(--reviewer); }
 .plan-item.done i { background: var(--ok); border-color: var(--ok); }
 .plan-item.done span { color: var(--faint); text-decoration: line-through; text-decoration-color: rgba(150, 180, 255, .25); }
+/* Файлы ветки: окантовка по состоянию — зелёная «готов», красная «не готов», жёлтая «под вопросом» */
+.fstat { display: block; width: 100%; text-align: left; padding: 10px 13px; margin-top: 8px; border-radius: 12px; border: 1.5px solid var(--line-strong); transition: background .14s; }
+.fstat:hover { background: var(--raised); }
+.fstat b { display: block; font: 13px/1.45 var(--mono); font-weight: 500; overflow-wrap: anywhere; }
+.fstat small { display: block; color: var(--muted); font-size: 12.5px; line-height: 1.4; margin-top: 2px; overflow-wrap: anywhere; }
+.fstat.ready, .legend .ready { border-color: var(--ok); }
+.fstat.unfinished, .legend .unfinished { border-color: var(--error); }
+.fstat.question, .legend .question { border-color: var(--warn); }
+.legend { display: flex; flex-wrap: wrap; gap: 8px; margin: 12px 0 4px; }
+.legend span { font-size: 12.5px; color: var(--muted); padding: 3px 10px; border-radius: 9px; border: 1.5px solid; }
+button.project { cursor: pointer; text-align: left; border-radius: 8px; padding: 3px 6px; transition: background .14s, color .14s; }
+button.project:hover { background: var(--raised); color: var(--muted); }
 .md table { border-collapse: collapse; margin: 0 0 13px; font-size: 14px; display: block; overflow-x: auto; max-width: 100%; }
 .md th, .md td { border-bottom: 1px solid var(--line); padding: 7px 14px 7px 0; text-align: left; vertical-align: top; }
 .md th, .md td { overflow-wrap: normal; word-break: normal; min-width: 5.5em; }
@@ -414,7 +426,7 @@ textarea.input { padding: 10px 14px; min-height: 96px; resize: vertical; line-he
     <div class="brand">
       <svg class="logo" viewBox="0 0 48 48" aria-hidden="true"><path class="l1" pathLength="1" d="M14 8V34"/><path class="l2" pathLength="1" d="M14 25C14 16 31 15 31 24"/><path class="l3" pathLength="1" d="M31 24V35C31 41 26 43 20.5 41.5"/><circle class="l4" cx="31" cy="9.5" r="3.1"/></svg>
       <b class="wordmark">haijack</b>
-      <span class="project" id="project"></span>
+      <button class="project" id="project" type="button" title="Файлы ветки"></button>
     </div>
     <button class="icon-btn" id="open-memory" title="Память и журнал" aria-label="Память и журнал"><svg viewBox="0 0 24 24"><path d="M12 7v5l3 2"/><circle cx="12" cy="12" r="8.5"/></svg></button>
     <button class="icon-btn" id="open-export" title="Сохранить диалог в файл" aria-label="Сохранить диалог в файл"><svg viewBox="0 0 24 24"><path d="M12 4v11M7.5 10.5L12 15l4.5-4.5M5 19.5h14"/></svg></button>
@@ -546,6 +558,16 @@ textarea.input { padding: 10px 14px; min-height: 96px; resize: vertical; line-he
     <pre class="block" id="m-journal"></pre>
   </div>
   <div class="sheet-foot"><button class="btn small" id="m-forget">Стереть память</button></div>
+</aside>
+
+<aside class="sheet" id="branch" hidden aria-labelledby="branch-title">
+  <div class="sheet-head"><h2 id="branch-title">Файлы ветки</h2><button class="icon-btn" data-close aria-label="Закрыть"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg></button></div>
+  <div class="sheet-body">
+    <p class="note" id="branch-head" style="margin-top:0"></p>
+    <div class="legend"><span class="ready">готов</span><span class="unfinished">не готов</span><span class="question">под вопросом</span></div>
+    <div id="branch-list"></div>
+  </div>
+  <div class="sheet-foot"><button type="button" class="btn small" id="branch-refresh">Обновить</button><span class="note" style="margin:0">Нажмите на файл, чтобы упомянуть его в сообщении</span></div>
 </aside>
 
 <aside class="sheet left" id="chats" hidden aria-labelledby="chats-title">
@@ -1009,7 +1031,7 @@ textarea.input { padding: 10px 14px; min-height: 96px; resize: vertical; line-he
     $('target').setAttribute('aria-pressed', ev.target === 'self' ? 'true' : 'false');
     var parts = String(ev.cwd || '').split(/[\\/]/).filter(Boolean);
     $('project').textContent = ev.target === 'self' ? 'код приложения' : (parts.length > 2 ? '…/' : '') + parts.slice(-2).join('/') + (ev.branch ? ' · ' + ev.branch : '');
-    $('project').title = ev.cwd || '';
+    $('project').title = (ev.cwd || '') + '\nНажмите, чтобы увидеть файлы ветки и их состояние';
     $('send').hidden = !!ev.busy; $('stop').hidden = !ev.busy;
     $('mode').disabled = !!ev.busy;
     input.placeholder = ev.busy ? 'Следующая задача — отправится, когда закончится текущая' : ev.target === 'self' ? 'Что улучшить в приложении?' : loopOn ? 'Задача, которая будет выполняться непрерывно' : 'Задача или /команда';
@@ -1314,7 +1336,7 @@ textarea.input { padding: 10px 14px; min-height: 96px; resize: vertical; line-he
     ['/help', 'все команды'], ['/diff', 'показать изменения последней задачи'], ['/undo', 'откатить изменения последней задачи'],
     ['/retry', 'выполнить последнюю задачу заново'], ['/clear', 'очистить диалог, сохранив опыт в память'],
     ['/doctor', 'проверить, всё ли готово к работе'], ['/memory', 'что программа помнит'], ['/journal', 'последние задачи и их результаты'], ['/status', 'среда и настройки'],
-    ['/commit', 'закоммитить изменения; сообщение напишет модель'], ['/cost', 'расход токенов за сессию'], ['/cd ', 'сменить папку проекта'], ['/open', 'открыть проект в Cursor или VS Code'], ['/mcp', 'подключённые серверы инструментов'], ['/loop ', 'повторять задачу до остановки'],
+    ['/commit', 'закоммитить изменения; сообщение напишет модель'], ['/files', 'файлы ветки: готовые, неготовые, под вопросом'], ['/cost', 'расход токенов за сессию'], ['/cd ', 'сменить папку проекта'], ['/open', 'открыть проект в Cursor или VS Code'], ['/mcp', 'подключённые серверы инструментов'], ['/loop ', 'повторять задачу до остановки'],
     ['/self ', 'улучшить само приложение'], ['/pull ', 'скачать модель на сервер Ollama'], ['/mode ', 'режим: auto, plan или solo'],
     ['/yes', 'не спрашивать перед записью файлов и командами']
   ];
@@ -1836,6 +1858,30 @@ textarea.input { padding: 10px 14px; min-height: 96px; resize: vertical; line-he
   $('open-clear').onclick = function () {
     confirmBox('Очистить диалог?', 'Переписка исчезнет с экрана, а агенты начнут с чистого листа — так программа тратит меньше ресурсов. Накопленный опыт перед этим сохранится в памяти.', 'Очистить', function () { sendText('/clear'); });
   };
+
+  // ---------- файлы ветки ----------
+  function loadBranch() {
+    var list = $('branch-list'), head = $('branch-head');
+    head.textContent = 'Проверяю файлы…';
+    api('GET', '/api/branch').then(function (r) {
+      list.textContent = '';
+      head.textContent = !r.files.length ? (r.git ? 'В ветке нет изменённых файлов.' : 'Агенты пока не меняли файлы в этом проекте.')
+        : (r.git ? 'Ветка ' + r.branch + (r.base ? ', изменения относительно ' + r.base : '') : 'Проект не под git: показаны файлы, изменённые агентами') +
+          '. Готовы: ' + r.counts.ready + ', не готовы: ' + r.counts.unfinished + ', под вопросом: ' + r.counts.question + (r.truncated ? ' (показана часть)' : '') + '.';
+      r.files.forEach(function (f) {
+        var b = el('button', 'fstat ' + (f.state === 'ready' || f.state === 'unfinished' ? f.state : 'question')); b.type = 'button';
+        b.appendChild(el('b', '', f.path)); b.appendChild(el('small', '', f.reason));
+        b.onclick = function () {
+          closeSheet();
+          input.value = (input.value && !/\s$/.test(input.value) ? input.value + ' ' : input.value) + '@' + f.path + ' ';
+          grow(); input.focus();
+        };
+        list.appendChild(b);
+      });
+    }, function (e) { list.textContent = ''; head.textContent = e.message; });
+  }
+  $('project').onclick = function () { if (state.target === 'self') return; show($('branch')); loadBranch(); };
+  $('branch-refresh').onclick = loadBranch;
 
   // ---------- чаты ----------
   var chatsData = { chats: [] };

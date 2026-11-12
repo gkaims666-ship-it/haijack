@@ -3,6 +3,7 @@
 // Любое замечание Reviewer или падение у Executor возвращает задачу к Coder, после чего
 // изменённый код снова проходит ревью: непроверенные правки в итог не попадают.
 
+import { recordFiles } from '../filestatus.js';
 import { writeFileAtomic } from '../tools/fsutil.js';
 import { mcp } from '../mcp/client.js';
 import { Agent } from './agent.js';
@@ -162,6 +163,7 @@ export class Orchestrator {
     const files = this.changes.files();
     if (files.length) {
       this.memory?.log({ task, mode: 'solo', cwd: this.cfg.cwd, files, done: true });
+      recordFiles(this.cfg.cwd, files, { solo: true });
       await this.remember(task, `Изменённые файлы: ${files.join(', ')}\n\nОтвет ассистента:\n${text}`, signal);
     }
     return text;
@@ -373,6 +375,7 @@ export class Orchestrator {
 
     const files = this.changes.files();
     this.history.push(`Задача: ${task.slice(0, 200)} — файлы: ${files.join(', ') || 'нет'}; ревью: ${verdict ?? '-'}; проверки: ${status}`);
+    recordFiles(this.cfg.cwd, files, { verdict, status });
     this.ui.summary({ files, verdict, status, check: check ? check.ok : undefined });
     return { kind: 'changes', files, verdict, status, report: coderReport, review: lastReview, exec: lastExec, check };
   }
