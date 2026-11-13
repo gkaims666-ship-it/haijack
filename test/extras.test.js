@@ -343,3 +343,73 @@ test('сервер MCP со входом через браузер: вход, р
     await assert.rejects(manager.login('нет-такого'), /не найден/);
   } finally { manager.stop(); server.close(); fs.rmSync(MCP_FILE, { force: true }); fs.rmSync(path.join(process.env.LCC_HOME, 'mcp-auth.json'), { force: true }); }
 });
+
+test('параллельные задачи: правки, сделанные командами, тоже переносятся; процессы копии останавливаются', async () => {
+  const { Session } = await import('../src/session.js');
+  const { Orchestrator } = await import('../src/agents/orchestrator.js');
+  const { Usage } = await import('../src/usage.js');
+  const { FakeClient, silentUi, tool } = await import('./helpers.js');
+
+  const cwd = tmp();
+  fs.writeFileSync(path.join(cwd, 'README.md'), '# проект\n');
+  fs.writeFileSync(path.join(cwd, 'old.txt'), 'устарел\n');
+  fs.writeFileSync(path.join(cwd, 'same.txt'), 'тот же\n');
+  fs.writeFileSync(path.join(cwd, '.gitignore'), '.env\n');
+  fs.writeFileSync(path.join(cwd, '.env'), 'SECRET=1\n');
+  // Скрипт проекта: создаёт файл, дописывает существующий, удаляет устаревший, переписывает файл тем же содержимым
+  fs.writeFileSync(path.join(cwd, 'gen.mjs'), `import fs from 'node:fs';
+fs.writeFileSync('gen.txt', 'env=' + fs.existsSync('.env') + '\\n');
+fs.appendFileSync('README.md', 'дописано командой\\n');
+fs.rmSync('old.txt');
+fs.writeFileSync('same.txt', 'тот же\\n');
+`);
+  fs.writeFileSync(path.join(cwd, 'idle.mjs'), 'console.log("запущен"); setInterval(() => {}, 1000);\n');
+  saveSettings({ LCC_PROVIDER: '', LCC_MODEL: '', ANTHROPIC_API_KEY: 'k', LCC_AUTO_APPROVE: '1' });
+  const cfg = buildConfig(cwd);
+  cfg.memory = false;
+  const script = async (role, turn, req) => {
+    const all = JSON.stringify(req.messages);
+    const gen = /генерац/.test(all);
+    if (role === 'architect') return 'РЕЖИМ: ИЗМЕНЕНИЯ\n1. Выполнить';
+    if (role === 'coder') {
+      const done = (all.match(/tool_result/g) || []).length;
+      if (gen) return done === 0 ? [tool('g1', 'run_command', { command: 'node gen.mjs' })] : done === 1 ? [tool('g2', 'start_process', { command: 'node idle.mjs', wait_sec: 1 })] : 'Готово.';
+      return done === 0 ? [tool('n1', 'write_file', { path: 'note.txt', content: 'заметка\n' })] : 'Готово.';
+    }
+    if (role === 'reviewer') return 'ВЕРДИКТ: OK';
+    return 'СТАТУС: PASS';
+  };
+  const ui = silentUi({ confirm: async () => true });
+  ui.canAsk = true;
+  const usage = new Usage();
+  const session = new Session({ cfg, orchestrator: new Orchestrator({ client: new FakeClient(script), cfg, ui, usage }), usage, ui, mode: 'auto' });
+
+  await session.handle('/parallel запусти генерацию || добавь заметку');
+  const log = ui.log.join('\n');
+  assert.equal(fs.readFileSync(path.join(cwd, 'gen.txt'), 'utf8'), 'env=true\n', 'локальные настройки доступны в копии');
+  assert.equal(fs.readFileSync(path.join(cwd, 'README.md'), 'utf8'), '# проект\nдописано командой\n');
+  assert.equal(fs.existsSync(path.join(cwd, 'old.txt')), false);
+  assert.equal(fs.readFileSync(path.join(cwd, 'note.txt'), 'utf8'), 'заметка\n');
+  assert.match(log, /1\. запусти генерацию\n\s+перенесено в проект: README\.md, gen\.txt, old\.txt\n/);
+  assert.match(log, /2\. добавь заметку\n\s+перенесено в проект: note\.txt\n/);
+  // Процесс, запущенный в копии, остановлен вместе с ней
+  assert.deepEqual(listProcesses(), []);
+  assert.deepEqual(fs.readdirSync(os.tmpdir()).filter((n) => n.startsWith('haijack-parallel-')), []);
+  // Откат возвращает и удалённый командой файл
+  await session.handle('/undo');
+  assert.equal(fs.readFileSync(path.join(cwd, 'old.txt'), 'utf8'), 'устарел\n');
+  assert.equal(fs.readFileSync(path.join(cwd, 'README.md'), 'utf8'), '# проект\n');
+  assert.deepEqual(['gen.txt', 'note.txt'].map((f) => fs.existsSync(path.join(cwd, f))), [false, false]);
+  assert.equal(fs.readFileSync(path.join(cwd, '.env'), 'utf8'), 'SECRET=1\n');
+});
+
+test('поиск: страница проверки вместо выдачи — понятное сообщение, а не «ничего не найдено»', async () => {
+  const { server, url } = await serve((req, res) => { res.writeHead(202, { 'content-type': 'text/html' }); res.end('<html><div class="anomaly-modal">Unfortunately, bots use DuckDuckGo too.</div></html>'); });
+  process.env.LCC_SEARCH_URL = `${url}/?q={q}`;
+  try {
+    const ctx = { cwd: tmp(), ui: { approve: async () => true }, cfg: {} };
+    const { webSearch } = await import('../src/tools/search.web.js');
+    await assert.rejects(webSearch('node'), /проверку «я не робот»/);
+    void ctx;
+  } finally { delete process.env.LCC_SEARCH_URL; server.close(); }
+});
