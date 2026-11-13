@@ -9,19 +9,25 @@ import { tempBase } from './self/store.js';
 import { walk } from './tools/fsutil.js';
 import { saveCheckpoint } from './checkpoints.js';
 import { moveRecords } from './filestatus.js';
+import { stopProcessesIn } from './tools/background.js';
 
 export const MAX_PARALLEL = 4;
 const MAX_COPY_FILES = 30000;
 const MAX_COPY_BYTES = 1024 * 1024 * 1024;
 // Папки с зависимостями не копируются, а подключаются ссылкой: без них в копии не запустились бы тесты
 const LINKED = ['node_modules', '.venv', 'venv', 'vendor'];
+// Локальные настройки обычно скрыты от git, но без них в копии не запустятся ни тесты, ни сервер
+const LOCAL_FILES = ['.env', '.env.local', '.env.development', '.env.test'];
 
 /** Разбирает «задача 1 || задача 2» */
 export function splitTasks(text) {
   return String(text || '').split(/\s*\|\|\s*|\n\s*---+\s*\n/).map((t) => t.trim()).filter(Boolean);
 }
 
+const stamp = (file) => { const st = fs.statSync(file); return `${st.size}:${st.mtimeMs}`; };
+
 function copyProject(src, dest) {
+  const manifest = new Map(); // путь в копии -> размер и время сразу после копирования
   let files = 0;
   let bytes = 0;
   for (const e of walk(src, { includeHidden: true })) {
@@ -32,6 +38,11 @@ function copyProject(src, dest) {
     if (files > MAX_COPY_FILES || bytes > MAX_COPY_BYTES) throw new Error('Проект слишком велик для параллельной работы в копиях (больше 30 000 файлов или 1 ГБ без учёта зависимостей).');
     fs.mkdirSync(path.dirname(target), { recursive: true });
     fs.copyFileSync(e.abs, target);
+    manifest.set(e.rel, stamp(target));
+  }
+  for (const name of LOCAL_FILES) {
+    const to = path.join(dest, name);
+    try { if (!fs.existsSync(to) && fs.statSync(path.join(src, name)).isFile()) fs.copyFileSync(path.join(src, name), to); } catch { /* файла нет */ }
   }
   const links = [];
   for (const name of LINKED) {
@@ -41,11 +52,28 @@ function copyProject(src, dest) {
       if (fs.statSync(from).isDirectory() && !fs.existsSync(to)) { fs.symlinkSync(from, to, 'junction'); links.push(to); }
     } catch { /* папки нет или ссылку создать нельзя — задача обойдётся без неё */ }
   }
-  return links;
+  return { links, manifest };
+}
+
+/** Файлы, изменённые в копии командами (форматирование, генерация кода), а не инструментами записи */
+function commandChanges(run, known) {
+  const out = [];
+  const seen = new Set();
+  for (const e of walk(run.dir, { includeHidden: true })) {
+    if (e.isDir) continue;
+    seen.add(e.rel);
+    if (known.has(e.rel) || (LOCAL_FILES.includes(e.rel) && !run.manifest.has(e.rel))) continue; // подложенные настройки в проект не возвращаются
+    let now;
+    try { now = stamp(e.abs); } catch { continue; }
+    if (run.manifest.get(e.rel) !== now) out.push(e.rel);
+  }
+  for (const rel of run.manifest.keys()) if (!seen.has(rel) && !known.has(rel) && !fs.existsSync(path.join(run.dir, rel))) out.push(rel);
+  return out;
 }
 
 function removeCopy(dir, links) {
   // Сначала убираются ссылки: удаление копии не должно задеть настоящие зависимости проекта
+  stopProcessesIn(dir); // сервер, запущенный задачей в копии, не должен остаться работать в удалённой папке
   for (const link of links) { try { fs.unlinkSync(link); } catch { try { fs.rmdirSync(link); } catch { /* уже нет */ } } }
   try { fs.rmSync(dir, { recursive: true, force: true, maxRetries: 3 }); } catch { /* временная папка: система уберёт её сама */ }
 }
@@ -66,7 +94,8 @@ export async function runParallel({ cfg, tasks, spawn, onProgress = () => {}, si
     tasks.forEach((task, i) => {
       const dir = path.join(base, `task${i + 1}`);
       fs.mkdirSync(dir);
-      runs.push({ task, dir, links: copyProject(cfg.cwd, dir), error: '' });
+      runs.push({ task, dir, links: [], manifest: new Map(), error: '' });
+      Object.assign(runs[runs.length - 1], copyProject(cfg.cwd, dir));
     });
     onProgress(`Копии проекта готовы (${runs.length}). Задачи запущены одновременно.`);
 
@@ -108,17 +137,32 @@ export async function runParallel({ cfg, tasks, spawn, onProgress = () => {}, si
       const applied = [];
       const conflicts = [];
       const snapshots = run.made ? [...run.made.orchestrator.changes.snapshots] : [];
+      const changes = [];
+      const known = new Set();
       for (const [absCopy, before] of snapshots) {
         const rel = path.relative(run.dir, absCopy);
-        if (!rel || rel.startsWith('..')) continue;
+        if (!rel || rel.startsWith('..') || path.isAbsolute(rel)) continue;
+        known.add(rel.split(path.sep).join('/'));
+        changes.push({ rel, before });
+      }
+      // У файлов, изменённых командами, исходного содержимого нет: им считается то, что сейчас лежит в проекте
+      if (run.made) for (const rel of commandChanges(run, known)) changes.push({ rel: rel.split('/').join(path.sep), byCommand: true });
+      for (const change of changes) {
+        const { rel } = change;
+        const absCopy = path.join(run.dir, rel);
+        let before = change.before;
         let after = null;
         try { after = fs.readFileSync(absCopy); } catch { /* удалён задачей */ }
-        const unchanged = before === null ? after === null : after !== null && before.equals(after);
+        const unchanged = change.byCommand ? false : before === null ? after === null : after !== null && before.equals(after);
         if (unchanged) continue;
         const main = path.join(cfg.cwd, rel);
         let current = null;
         try { current = fs.readFileSync(main); } catch { /* в проекте файла нет */ }
-        const clean = before === null ? current === null : current !== null && before.equals(current);
+        if (change.byCommand) {
+          if (after === null ? current === null : current !== null && after.equals(current)) continue;
+          before = merged.has(main) ? undefined : current; // файл уже перенесён другой задачей — спорный
+        }
+        const clean = before === undefined ? false : before === null ? current === null : current !== null && before.equals(current);
         const shown = rel.split(path.sep).join('/');
         if (!clean) {
           // Файл уже изменён другой задачей (или пользователем, пока шла работа): версию этой задачи откладываем рядом

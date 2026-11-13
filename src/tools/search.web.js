@@ -70,7 +70,13 @@ export async function webSearch(query, { max = 6, signal } = {}) {
   let results;
   if (/json/i.test(res.headers.get('content-type') || '') || /^\s*\{/.test(body)) {
     try { results = parseJsonResults(JSON.parse(body)); } catch { results = []; }
-  } else results = parseHtmlResults(body);
+  } else {
+    results = parseHtmlResults(body);
+    // Поисковик принял запрос за автоматический и вместо выдачи показал проверку
+    if (!results.length && (res.status === 202 || /anomaly|captcha|challenge-form|unusual traffic/i.test(body))) {
+      throw new Error('Поисковик запросил проверку «я не робот» и не показал результаты. Попробуй позже или задай другой поисковик в настройках (например, свой SearXNG).');
+    }
+  }
   return results.slice(0, Math.min(MAX_RESULTS, Math.max(1, Number(max) || 6)));
 }
 
