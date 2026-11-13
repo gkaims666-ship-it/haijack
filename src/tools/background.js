@@ -3,6 +3,7 @@
 // по команде агента, пользователя (/kill) или при закрытии программы.
 
 import { spawn } from 'node:child_process';
+import path from 'node:path';
 import { getShell, isWindows } from '../platform.js';
 import { isDangerous, killTree } from './command.js';
 import { resolvePath, displayPath } from './fsutil.js';
@@ -10,6 +11,7 @@ import { resolvePath, displayPath } from './fsutil.js';
 const MAX_BUFFER = 200000;   // столько последних символов вывода хранится на процесс
 const MAX_RETURN = 12000;    // столько отдаётся модели за одно чтение
 const MAX_PROCESSES = 8;
+const KEEP_FINISHED = 20;      // столько завершённых процессов помнится, чтобы агент мог дочитать их вывод
 const procs = new Map();
 let nextId = 1;
 
@@ -40,6 +42,9 @@ function start(command, cwd) {
   child.on('error', (err) => { push(Buffer.from(`\n[ошибка запуска: ${err.message}]`)); proc.exit = -1; });
   child.on('close', (code) => { if (proc.exit === null) proc.exit = code ?? -1; });
   procs.set(proc.id, proc);
+  const finished = [...procs.values()].filter((p) => p.exit !== null);
+  for (const old of finished.slice(0, Math.max(0, finished.length - KEEP_FINISHED))) procs.delete(old.id);
+  watchHangup();
   return proc;
 }
 
@@ -70,6 +75,20 @@ export function stopAllProcesses() {
   for (const p of procs.values()) if (p.exit === null) { p.stopped = true; killTree(p.child); stopped++; }
   procs.clear();
   return stopped;
+}
+
+/** Останавливает процессы, запущенные внутри папки (временная копия проекта удаляется) */
+export function stopProcessesIn(dir) {
+  const inside = (cwd) => { const rel = path.relative(dir, cwd); return !rel.startsWith('..') && !path.isAbsolute(rel); };
+  for (const p of [...procs.values()]) if (inside(p.cwd)) { if (p.exit === null) { p.stopped = true; killTree(p.child); } procs.delete(p.id); }
+}
+
+// Закрытие окна терминала: без обработчика программа исчезла бы, не остановив свои процессы
+let hangupWatched = false;
+function watchHangup() {
+  if (hangupWatched || isWindows) return;
+  hangupWatched = true;
+  process.once('SIGHUP', () => { stopAllProcesses(); process.exit(129); });
 }
 
 // Процесс, запущенный в своей группе, пережил бы программу — при выходе всё останавливается
