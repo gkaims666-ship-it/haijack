@@ -1,6 +1,7 @@
 // Сессия: общая логика терминального REPL и веб-интерфейса —
 // slash-команды, запуск задач в нужном режиме, непрерывные задачи, самоулучшение, прерывание.
 
+import { isLite } from './hardware.js';
 import { spawn } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -133,8 +134,12 @@ export class Session {
     return true;
   }
 
+  /** Задачу выполнит один агент: так выбрано в режиме или модель работает на процессоре (экономный режим) */
+  get soloNow() { return this.mode === 'solo' || (this.mode === 'auto' && isLite(this.cfg)); }
+
   state() {
     return {
+      lite: isLite(this.cfg),
       mode: this.mode, target: this.target, busy: this.busy, looping: this.looping,
       model: this.cfg.model, provider: this.cfg.provider, cwd: this.cfg.cwd,
       autoApprove: this.cfg.autoApprove, version: VERSION, branch: gitBranch(this.cfg.cwd),
@@ -149,7 +154,7 @@ export class Session {
    */
   takeRetry() {
     if (!this.lastTask) return null;
-    if (this.mode === 'solo' && this.target === 'project') this.orchestrator.agents.solo.rewind();
+    if (this.soloNow && this.target === 'project') this.orchestrator.agents.solo.rewind();
     return this.lastTask;
   }
 
@@ -215,7 +220,7 @@ export class Session {
 
   async #runProjectTask(text, signal) {
     const { ui, orchestrator } = this;
-    if (this.mode === 'solo') return { kind: 'solo', done: true, text: await orchestrator.solo(text, signal) };
+    if (this.soloNow) return { kind: 'solo', done: true, text: await orchestrator.solo(text, signal) };
     let presetPlan;
     if (this.mode === 'plan') {
       presetPlan = await orchestrator.plan(text, signal);
