@@ -424,6 +424,17 @@ export function toOllamaMessages(messages) {
  * Сколько модели работает на процессоре вместо видеокарты (по данным Ollama).
  * @returns {Promise<string>} предупреждение или пустая строка
  */
+/** Доля модели на процессоре, % (null — неизвестно) */
+export async function ollamaCpuShare(local, model) {
+  try {
+    const origin = local.baseUrl.replace(/\/v1$/, '');
+    const res = await fetch(`${origin}/api/ps`, { signal: AbortSignal.timeout(4000) });
+    if (!res.ok) return null;
+    const entry = ((await res.json()).models || []).find((m) => m.name === model || m.model === model);
+    return entry?.size ? Math.round((1 - (entry.size_vram || 0) / entry.size) * 100) : null;
+  } catch { return null; }
+}
+
 export async function ollamaLoadWarning(local, model) {
   try {
     const origin = local.baseUrl.replace(/\/v1$/, '');
@@ -448,6 +459,7 @@ export class OpenAIClient {
     this.off = { usage: false, options: false, think: false }; // что сервер отказался принимать
     this.failedOver = new Set();                 // модели, с которых клиент ушёл на запасную
     this.ollama = new Map();                     // адрес сервера -> это Ollama? (у неё свой, более полный API)
+    this.slowSpeed = new Set();                  // модели, о низкой скорости которых уже сообщили
     this.warned = new Set();                     // модели, о медленной работе которых уже сообщили
     this.noVision = new Set();                   // модели, не принимающие изображения
     this.textTools = new Set();                  // модели без встроенного вызова инструментов: с ними — текстовый режим
@@ -721,7 +733,7 @@ export class OpenAIClient {
 
         try {
           return native
-            ? await this.#consumeOllama(res.body, handlers, toolNames, alive)
+            ? await this.#consumeOllama(res.body, handlers, toolNames, alive, model)
             : await this.#consume(res.body, handlers, toolNames, alive);
         } catch (err) {
           if (signal?.aborted) throw abortError();
@@ -772,7 +784,7 @@ export class OpenAIClient {
   }
 
   /** Поток собственного API Ollama: строки JSON, вызовы инструментов приходят целиком */
-  async #consumeOllama(body, handlers, toolNames, alive) {
+  async #consumeOllama(body, handlers, toolNames, alive, model = '') {
     const filter = new TextFilter();
     let shown = '';
     const emit = (visible) => {
@@ -810,6 +822,12 @@ export class OpenAIClient {
         finish = ev.done_reason || 'stop';
         usage.input_tokens = ev.prompt_eval_count || 0;
         usage.output_tokens = ev.eval_count || 0;
+        // Настоящая скорость модели на этом компьютере: если она мала, человек должен знать, что дело не в программе
+        const tps = ev.eval_count >= 5 && ev.eval_duration ? ev.eval_count / (ev.eval_duration / 1e9) : 0;
+        if (tps && tps < 2 && !this.slowSpeed.has(model)) {
+          this.slowSpeed.add(model);
+          handlers.onNotice?.(`Модель ${model} выдаёт ${tps < 1 ? tps.toFixed(2).replace('.', ',') : tps.toFixed(1).replace('.', ',')} токена в секунду — это предел компьютера для модели такого размера. Для быстрых ответов выберите модель поменьше.`);
+        }
       }
     };
     for await (const chunk of body) {

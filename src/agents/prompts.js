@@ -232,7 +232,21 @@ export function loadProjectInstructions(cwd) {
  * @param {object} [opts]
  * @param {boolean} [opts.compact] короткие инструкции — для локальных моделей
  */
-export function buildSystemPrompt(role, cwd, memory = '', { compact = false, custom = '' } = {}) {
+const LITE_BASE = `Ты — haijack, помощник программиста. Работаешь на компьютере пользователя, в папке его проекта.
+Отвечай по-русски, коротко и по делу. На вопросы и обычный разговор отвечай сразу, без инструментов.
+Инструменты используй, только когда нужно прочитать или изменить файлы либо выполнить команду.
+Перед изменением существующего файла прочитай его. Меняй только то, о чём просили.
+После изменений скажи одной-двумя фразами, что сделано.`;
+
+export function buildSystemPrompt(role, cwd, memory = '', { compact = false, custom = '', lite = false } = {}) {
+  if (lite) {
+    // Экономный режим: модель работает на процессоре, и каждое лишнее слово инструкций — секунды ожидания
+    const parts = [LITE_BASE, `# Среда\n${platformPromptBlock(cwd)}\nДата: ${new Date().toISOString().slice(0, 10)}`];
+    const rules = loadProjectInstructions(cwd);
+    if (rules) parts.push(`# Инструкции проекта\n${rules.text.slice(0, 800)}`);
+    if (custom) parts.push(`# Инструкции пользователя — выполняй их всегда\n${custom.slice(0, 800)}`);
+    return parts.join('\n\n');
+  }
   // У локальной модели общая часть инструкций идёт первой и одинакова у всех агентов, а роль — последней:
   // сервер модели не перечитывает совпадающее начало запроса, и смена агента обходится дешевле
   const parts = compact ? [COMPACT_BASE] : [BASE_POLICY];

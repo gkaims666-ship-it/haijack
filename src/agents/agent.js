@@ -1,10 +1,26 @@
 // Базовый агент: цикл «модель -> tool_use -> tool_result -> модель» с потоковым выводом.
 
+import { isLite } from '../hardware.js';
 import { buildSystemPrompt, AGENT_META } from './prompts.js';
 import { getTools, toApiTools, executeTool, externalTools } from '../tools/index.js';
 import { readInstructions } from '../config.js';
 
 const CONTEXT_SOFT_LIMIT = 500_000; // символов истории, после которых старые выводы инструментов сжимаются
+
+const LITE_TOOLS = ['read_file', 'list_dir', 'grep', 'write_file', 'edit_file', 'run_command'];
+
+/** Описания инструментов без подробностей: первое предложение и имена параметров */
+function slimTools(tools) {
+  return tools.map((t) => ({
+    name: t.name,
+    description: String(t.description).split(/(?<=[.!?])\s/)[0].slice(0, 160),
+    input_schema: {
+      type: 'object',
+      properties: Object.fromEntries(Object.entries(t.input_schema?.properties || {}).map(([k, v]) => [k, { type: v.type || 'string' }])),
+      required: t.input_schema?.required || [],
+    },
+  }));
+}
 
 export class Agent {
   /**
@@ -32,12 +48,17 @@ export class Agent {
   }
 
   /** Свои инструменты и инструменты подключённых серверов MCP (их набор может меняться между задачами) */
-  get tools() { return [...this.baseTools, ...externalTools(this.role)]; }
-  get apiTools() { return toApiTools(this.tools); }
+  get lite() { return this.role === 'solo' && isLite(this.cfg); }
+  get tools() {
+    // Экономный режим: только основные инструменты — описание каждого модель читает перед ответом
+    if (this.lite) return this.baseTools.filter((t) => LITE_TOOLS.includes(t.name));
+    return [...this.baseTools, ...externalTools(this.role)];
+  }
+  get apiTools() { return this.lite ? slimTools(toApiTools(this.tools)) : toApiTools(this.tools); }
 
   #buildSystem() {
     const memory = this.cfg.memory && this.memory ? this.memory.read() : '';
-    return buildSystemPrompt(this.role, this.cfg.cwd, memory, { compact: this.cfg.provider === 'local', custom: readInstructions() });
+    return buildSystemPrompt(this.role, this.cfg.cwd, memory, { compact: this.cfg.provider === 'local', custom: readInstructions(), lite: this.lite });
   }
 
   /** Обновить системный промт (после изменения памяти), не теряя историю диалога */

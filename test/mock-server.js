@@ -190,7 +190,7 @@ function fromOllama(messages) {
  * false — как сторонний сервер только с OpenAI-совместимым API (LM Studio, llama.cpp).
  * cpuShare — какая доля модели «не поместилась в видеопамять» (для /api/ps).
  */
-export function startOpenAIMock({ style = 'native', installed = ['main-model', 'small-model'], failing = [], hanging = [], ollama = true, cpuShare = 0, delayMs = 0, noTools = false } = {}) {
+export function startOpenAIMock({ style = 'native', installed = ['main-model', 'small-model'], failing = [], hanging = [], ollama = true, cpuShare = 0, delayMs = 0, noTools = false, modelBytes = 5 * 2 ** 30 } = {}) {
   const requests = [];
   const pulls = [];
   const loads = [];   // запросы /api/generate: загрузка модели в память и выгрузка
@@ -210,7 +210,7 @@ export function startOpenAIMock({ style = 'native', installed = ['main-model', '
     }
     if (req.method === 'GET' && url.pathname === '/api/tags') {
       res.writeHead(200, { 'content-type': 'application/json' });
-      return res.end(JSON.stringify({ models: installed.map((name) => ({ name, size: 5 * 2 ** 30, details: { parameter_size: '7B', quantization_level: 'Q4_K_M' } })) }));
+      return res.end(JSON.stringify({ models: installed.map((name) => ({ name, size: modelBytes, details: { parameter_size: '7B', quantization_level: 'Q4_K_M' } })) }));
     }
     if (req.method === 'GET' && url.pathname === '/v1/models') {
       res.writeHead(200, { 'content-type': 'application/json' });

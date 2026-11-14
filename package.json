@@ -1,6 +1,6 @@
 {
   "name": "haijack",
-  "version": "2.2.1",
+  "version": "2.3.0",
   "description": "haijack — ИИ-ассистент для работы с кодом: четыре агента, окно приложения, Windows и Android. Без зависимостей.",
   "type": "module",
   "bin": {

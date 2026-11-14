@@ -15,7 +15,8 @@ import { EventHub, WebRenderer } from './hub.js';
 import { Session, MODES, TARGETS } from '../session.js';
 import { hasCredentials, saveSettings, refreshConfig, readInstructions, saveInstructions, CONFIG_DIR } from '../config.js';
 import { ModelClient, OpenAIClient } from '../api/index.js';
-import { checkLocalServer, pullModel, ollamaLoadWarning, MODEL_NAME } from '../api/openai.js';
+import { checkLocalServer, pullModel, ollamaLoadWarning, ollamaCpuShare, MODEL_NAME } from '../api/openai.js';
+import { isLite, isLocalHost, memoryFit, heavyNote, markSlow, suggestModel } from '../hardware.js';
 import { searchModels, modelVariants } from '../api/huggingface.js';
 import { Orchestrator } from '../agents/orchestrator.js';
 import { Memory, formatJournal } from '../memory.js';
@@ -116,7 +117,7 @@ export async function startWeb({ cfg, mode, port = 0, host = '127.0.0.1', token,
   const snapshot = () => ({
     t: 'state', ...session.state(), busy: running, needsSetup: !hasCredentials(cfg),
     tokens: usage.totals(), bootId, pull: pullView(), windows: clients, // windows — сколько окон сейчас подключено
-    modelState: modelState.status, modelNote: modelState.note, numCtx: cfg.provider === 'local' ? cfg.local.numCtx : 0,
+    modelState: modelState.status, modelNote: modelState.note, modelCpu: modelState.cpu ?? null, suggest: cfg.provider === 'local' && (modelState.status === 'heavy' || modelState.cpu >= 50) ? suggestModel().name : '', numCtx: cfg.provider === 'local' ? cfg.local.numCtx : 0,
     chat: chatId, chats: persist,
   });
   const pushState = () => hub.emit(snapshot(), { volatile: true });
@@ -232,9 +233,28 @@ export async function startWeb({ cfg, mode, port = 0, host = '127.0.0.1', token,
       }
       reconcile(health.models);
       if (unload && !same(unload, cfg.model)) await client.local.unload(unload);
+      // Модель больше памяти компьютера: загрузка заставила бы систему работать с диска вместо памяти —
+      // тормозило бы всё, включая это окно, а ответа пришлось бы ждать десятки минут. Решение — за человеком.
+      if (isLocalHost(cfg.local.baseUrl) && process.env.LCC_FORCE_LOAD !== cfg.model) {
+        const details = await client.local.listModelsDetailed(ac.signal).catch(() => []);
+        if (ac.signal.aborted) return;
+        const info = details.find((m) => same(m.name, cfg.model));
+        const fit = info?.size ? memoryFit(info.size) : null;
+        if (fit && !fit.fits) {
+          if (info.loaded) await client.local.unload(cfg.model); // осталась в памяти с прошлого запуска — освобождаем компьютер
+          modelState = { status: 'heavy', note: heavyNote(cfg.model, fit) };
+          pushState();
+          return;
+        }
+      }
       const native = await client.local.warm(cfg.model, ac.signal);
       if (ac.signal.aborted) return;
-      modelState = { status: native ? 'ready' : '', note: native ? await ollamaLoadWarning(cfg.local, cfg.model) : '' };
+      const cpu = native ? await ollamaCpuShare(cfg.local, cfg.model) : null;
+      // На процессоре включается экономный режим: один агент и короткие инструкции
+      const wasLite = isLite(cfg);
+      markSlow(cfg.model, cpu !== null && cpu >= 50);
+      if (isLite(cfg) !== wasLite) for (const a of Object.values(orchestrator.agents)) a.refreshSystem();
+      modelState = { status: native ? 'ready' : '', note: native ? await ollamaLoadWarning(cfg.local, cfg.model) : '', cpu };
     } catch (err) {
       if (ac.signal.aborted) return;
       modelState = { status: 'error', note: err.message };
@@ -352,6 +372,10 @@ export async function startWeb({ cfg, mode, port = 0, host = '127.0.0.1', token,
         ui.warn('Сначала настройте доступ к модели: откройте настройки.');
         return;
       }
+      if (isTask && cfg.provider === 'local' && modelState.status === 'heavy') {
+        ui.error(modelState.note);
+        return;
+      }
       outcome = await session.handle(text);
       if (outcome === 'exit') ui.info('В этом интерфейсе сессию завершает закрытие приложения или остановка программы.');
     } catch (err) {
@@ -376,7 +400,7 @@ export async function startWeb({ cfg, mode, port = 0, host = '127.0.0.1', token,
     model: cfg.model,
     models: cfg.models,
     anthropic: { hasKey: Boolean(cfg.apiKey || cfg.authToken), baseUrl: cfg.baseUrl },
-    local: { baseUrl: cfg.local.baseUrl, hasKey: Boolean(cfg.local.apiKey), numCtx: cfg.local.numCtx, temperature: cfg.local.temperature, think: cfg.local.think === 'off' ? 'off' : 'on' },
+    local: { baseUrl: cfg.local.baseUrl, hasKey: Boolean(cfg.local.apiKey), numCtx: cfg.local.numCtx, temperature: cfg.local.temperature, think: cfg.local.think === 'off' ? 'off' : 'on', profile: ['lite', 'full'].includes(process.env.LCC_PROFILE) ? process.env.LCC_PROFILE : 'auto' },
     instructions: readInstructions(),
     github: { hasToken: Boolean(githubToken()) },
     searchUrl: process.env.LCC_SEARCH_URL || '',
@@ -429,6 +453,7 @@ export async function startWeb({ cfg, mode, port = 0, host = '127.0.0.1', token,
       updates.LCC_LOCAL_TEMPERATURE = String(n);
     }
     if (body.think !== undefined) updates.LCC_LOCAL_THINK = body.think === 'on' ? 'on' : 'off';
+    if (body.profile !== undefined) updates.LCC_PROFILE = ['lite', 'full'].includes(body.profile) ? body.profile : '';
     if (typeof body.githubToken === 'string' && body.githubToken.trim()) updates.LCC_GITHUB_TOKEN = body.githubToken.trim();
     if (body.githubClear === true) updates.LCC_GITHUB_TOKEN = '';
     if (body.mcpConfig !== undefined) {
@@ -665,6 +690,12 @@ export async function startWeb({ cfg, mode, port = 0, host = '127.0.0.1', token,
           warmUp({ unload: previous });
           return send(res, 200, snapshot());
         }
+        case '/api/model/force':
+          // «Всё равно загрузить»: человек предупреждён, что модель больше памяти компьютера
+          if (running) return send(res, 409, { error: 'Дождитесь окончания текущей задачи.' });
+          saveSettings({ LCC_FORCE_LOAD: cfg.model });
+          warmUp();
+          return send(res, 200, snapshot());
         case '/api/chats/rename': {
           if (!persist) return send(res, 400, { error: 'Чаты недоступны в этом режиме.' });
           const id = String(body.id ?? '');

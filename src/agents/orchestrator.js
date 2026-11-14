@@ -3,6 +3,7 @@
 // Любое замечание Reviewer или падение у Executor возвращает задачу к Coder, после чего
 // изменённый код снова проходит ревью: непроверенные правки в итог не попадают.
 
+import { isLite } from '../hardware.js';
 import { repoMapBlock } from '../repomap.js';
 import { checksBlock } from '../projectchecks.js';
 import { saveCheckpoint } from '../checkpoints.js';
@@ -123,7 +124,7 @@ export class Orchestrator {
    */
   prime(mode, signal) {
     const prefix = this.#projectBlock();
-    return mode === 'solo' ? this.agents.solo.prime(signal, { prefix }) : this.agents.architect.prime(signal, { fresh: true, prefix });
+    return mode === 'solo' || (mode === 'auto' && isLite(this.cfg)) ? this.agents.solo.prime(signal, { prefix }) : this.agents.architect.prime(signal, { fresh: true, prefix });
   }
 
   /**
@@ -131,6 +132,7 @@ export class Orchestrator {
    * Агент сразу видит, где что лежит и чем проверять, и не тратит шаги на разведку.
    */
   #projectBlock() {
+    if (isLite(this.cfg)) return ''; // экономный режим: карту проекта модель читала бы минутами
     return `${repoMapBlock(this.cfg)}${checksBlock(this.cfg.cwd)}`;
   }
 

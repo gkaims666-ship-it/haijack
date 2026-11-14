@@ -235,6 +235,9 @@ footer { flex: none; padding-top: 6px; padding-bottom: max(12px, env(safe-area-i
 .chip.loop[aria-pressed="true"] { color: var(--executor); background: rgba(111, 240, 216, .10); }
 select.chip { appearance: none; -webkit-appearance: none; background: transparent; border: 0; color: var(--muted); }
 .btn.send { min-height: 40px; border-radius: 13px; padding: 0 16px; }
+.hw { margin: 0 0 10px; padding: 14px 16px; border-radius: 16px; background: rgba(242, 198, 109, .07); border: 1px solid rgba(242, 198, 109, .35); font-size: 14px; line-height: 1.5; }
+.hw b { display: block; color: var(--warn); margin-bottom: 4px; }
+.hw .row { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 12px; }
 .foot { display: flex; justify-content: space-between; gap: 12px; color: var(--faint); font-size: 12px; padding: 7px 10px 0; min-height: 20px; }
 #net { color: var(--error); }
 
@@ -472,6 +475,7 @@ textarea.input { padding: 10px 14px; min-height: 96px; resize: vertical; line-he
   <button class="jump" id="jump" title="К последним сообщениям" aria-label="К последним сообщениям" hidden><svg viewBox="0 0 24 24"><path d="M12 5v14M5.5 12.5L12 19l6.5-6.5"/></svg></button>
   <div class="menu" id="slash" hidden role="listbox" aria-label="Команды"></div>
   <div class="menu" id="model-menu" hidden aria-label="Модели"></div>
+  <div class="hw" id="hw" hidden role="status"><b id="hw-title"></b><div id="hw-text"></div><div class="row" id="hw-row"></div></div>
   <div class="composer" id="composer">
     <div class="queued" id="queued" hidden><b>В очереди</b><span id="queued-text"></span><button class="mini" id="queued-cancel" type="button">Убрать</button></div>
     <div class="files-row" id="files" hidden></div>
@@ -526,6 +530,9 @@ textarea.input { padding: 10px 14px; min-height: 96px; resize: vertical; line-he
       <label class="field"><span>Размышления модели</span>
         <select class="input" id="s-think"><option value="off">Выключены — ответ начинается сразу</option><option value="on">Включены — как решит модель</option></select>
         <small>Думающие модели сначала рассуждают и только потом отвечают. Без рассуждений ответ начинается сразу; на сложных задачах с ними результат лучше, и они видны в чате по ходу.</small></label>
+      <label class="field"><span>Режим работы с моделью</span>
+        <select class="input" id="s-profile"><option value="auto">Авто — экономный, если модель работает на процессоре</option><option value="lite">Экономный — один агент, короткие инструкции</option><option value="full">Полный — все агенты и инструменты</option></select>
+        <small>На компьютере без подходящей видеокарты модель читает запрос медленно. В экономном режиме запрос в несколько раз короче, и ответ начинается быстрее.</small></label>
       <label class="field"><span>Температура</span><input class="input" id="s-temp" type="number" min="0" max="2" step="0.1" inputmode="decimal">
         <small>0 — строго и предсказуемо, 1 и выше — разнообразнее. Для кода лучше 0–0,3.</small></label>
     </div>
@@ -952,10 +959,31 @@ textarea.input { padding: 10px 14px; min-height: 96px; resize: vertical; line-he
     lastUserRow = row;
     return row;
   }
+  // Карточка о возможностях компьютера: модель не помещается в память или работает только на процессоре.
+  // Строки состояния внизу для этого мало — человек должен увидеть причину медленной работы и выход из неё.
+  var hwHidden = '';
+  function drawHw(ev) {
+    var box = $('hw'), local = ev.provider === 'local', heavy = local && ev.modelState === 'heavy';
+    var cpu = local && ev.modelState === 'ready' && ev.modelCpu >= 95;
+    var key = (heavy ? 'h:' : 'c:') + ev.model;
+    if ((!heavy && !cpu) || ev.needsSetup || (cpu && hwHidden === key)) { box.hidden = true; return; }
+    box.hidden = false;
+    $('hw-title').textContent = heavy ? 'Модель не помещается в память компьютера' : 'Модель работает только на процессоре';
+    $('hw-text').textContent = heavy ? String(ev.modelNote || '')
+      : 'Видеокарта не используется, поэтому ответы идут медленно. Включён экономный режим: один агент и короткие инструкции — так ответ начинается быстрее. Чем меньше модель, тем быстрее она отвечает.';
+    var row = $('hw-row'); row.textContent = '';
+    function button(text, primary, fn) { var b = el('button', 'btn small' + (primary ? ' primary' : ''), text); b.type = 'button'; b.onclick = fn; row.appendChild(b); }
+    if (ev.suggest) button('Скачать ' + ev.suggest, heavy, function () { openCatalog({ quick: true }); startPull(ev.suggest); });
+    button('Выбрать другую модель', false, function () { openCatalog({ quick: true }); });
+    if (heavy) button('Всё равно загрузить', false, function () { api('POST', '/api/model/force', {}).catch(function (e) { note('error', e.message); }); });
+    else button('Понятно', false, function () { hwHidden = key; box.hidden = true; });
+  }
+
   function drawFoot() {
     var parts = [];
     if (state.numCtx && lastInput) parts.push('Контекст занят на ' + Math.min(100, Math.round(100 * lastInput / state.numCtx)) + '%');
     var t = state.tokens;
+    if (state.lite) parts.push('экономный режим');
     if (state.processes) parts.push('фоновых процессов: ' + state.processes + ' (/ps)');
     if (t && (t.input || t.output)) parts.push('за сессию: вход ' + t.input.toLocaleString('ru') + ', выход ' + t.output.toLocaleString('ru') + ' токенов');
     $('tokens').textContent = parts.join(' · ');
@@ -1077,7 +1105,8 @@ textarea.input { padding: 10px 14px; min-height: 96px; resize: vertical; line-he
     chip.setAttribute('data-state', local ? ev.modelState || '' : '');
     var status = $('model-status'), noteText = String(ev.modelNote || '').split('\n')[0];
     status.className = ev.modelState === 'error' ? 'error' : '';
-    status.textContent = !local ? '' : ev.modelState === 'loading' ? 'Модель загружается в память… ' : noteText ? noteText + ' ' : '';
+    status.textContent = !local ? '' : ev.modelState === 'loading' ? 'Модель загружается в память… ' : ev.modelState === 'heavy' ? '' : noteText ? noteText + ' ' : '';
+    drawHw(ev);
     if (wasBusy && !ev.busy) {
       if (document.hidden) {
         doneMark = true;
@@ -1814,6 +1843,7 @@ textarea.input { padding: 10px 14px; min-height: 96px; resize: vertical; line-he
       if (!known) ctx.appendChild(new Option(String(s.local.numCtx), String(s.local.numCtx)));
       ctx.value = String(s.local.numCtx);
       $('s-think').value = s.local.think === 'on' ? 'on' : 'off';
+      $('s-profile').value = s.local.profile || 'auto';
       $('s-gh').value = ''; $('s-gh').placeholder = s.github && s.github.hasToken ? 'сохранён — введите новый, чтобы заменить' : 'ghp_… или github_pat_…';
       $('s-mcp').value = s.mcp ? s.mcp.config : '';
       $('s-search').value = s.searchUrl || '';
@@ -1858,7 +1888,7 @@ textarea.input { padding: 10px 14px; min-height: 96px; resize: vertical; line-he
     if (settings.mcp && $('s-mcp').value.trim() !== String(settings.mcp.config || '').trim()) body.mcpConfig = $('s-mcp').value;
     if (local) {
       body.localUrl = $('s-local').value.trim(); body.model = $('s-model-l').value; body.numCtx = Number($('s-ctx').value);
-      body.think = $('s-think').value;
+      body.think = $('s-think').value; body.profile = $('s-profile').value;
       if ($('s-temp').value !== '') body.temperature = Number(String($('s-temp').value).replace(',', '.'));
     }
     else {
