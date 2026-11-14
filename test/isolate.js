@@ -12,5 +12,6 @@ process.env.LCC_SELFCHECK_TESTS = '0'; // самопроверка в теста
 for (const k of Object.keys(process.env)) {
   if (/^(ANTHROPIC_|OPENAI_|LLM_|LOCAL_LLM_|LCC_(?!HOME$|NO_LIVE$|NO_WARM$|SELFCHECK_TESTS$))/.test(k)) delete process.env[k];
 }
+process.env.LCC_RAM_BYTES = String(64 * 2 ** 30); // тесты не зависят от памяти машины, на которой идут
 
 export const TEST_HOME = process.env.LCC_HOME;
